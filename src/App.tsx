@@ -4,6 +4,7 @@ import { DragDropContext, DropResult } from '@hello-pangea/dnd';
 import { LogIn, Plus } from 'lucide-react';
 import { db, Project, Task, User } from './db/db';
 import { auth, signInWithGoogle, logout as firebaseLogout, onAuthStateChanged } from './auth/firebase';
+import { syncService } from './services/SyncService';
 import Sidebar from './components/Sidebar';
 import Column from './components/Column';
 import TaskModal from './components/TaskModal';
@@ -31,6 +32,9 @@ const App: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [initialTaskStatus, setInitialTaskStatus] = useState<string | undefined>();
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [sheetLinkInput, setSheetLinkInput] = useState('');
+  const [activeView, setActiveView] = useState<'board' | 'settings'>('board');
 
   const loadProjects = React.useCallback(async () => {
     const allProjects = await db.getAll<Project>('projects');
@@ -46,17 +50,7 @@ const App: React.FC = () => {
     }));
 
     setProjects(migratedProjects);
-    if (migratedProjects.length > 0) {
-      const activeProjectStillExists = activeProjectId
-        ? migratedProjects.some(project => project.id === activeProjectId)
-        : false;
-      if (!activeProjectId || !activeProjectStillExists) {
-        setActiveProjectId(migratedProjects[0].id);
-      }
-    } else if (activeProjectId) {
-      setActiveProjectId(null);
-    }
-  }, [activeProjectId]);
+  }, []);
 
   const loadUsers = React.useCallback(async () => {
     const allUsers = await db.getAll<User>('users');
@@ -67,6 +61,51 @@ const App: React.FC = () => {
     const projectTasks = await db.getTasksByProject(projectId);
     setTasks(projectTasks);
   }, []);
+
+  const handleSelectProject = (projectId: string) => {
+    setActiveProjectId(projectId);
+    setActiveView('board');
+  };
+
+  // Separate effect to handle active project selection
+  useEffect(() => {
+    if (projects.length > 0) {
+      const activeProjectStillExists = activeProjectId
+        ? projects.some(project => project.id === activeProjectId)
+        : false;
+      if (!activeProjectId || !activeProjectStillExists) {
+        setActiveProjectId(projects[0].id);
+      }
+    } else if (activeProjectId) {
+      setActiveProjectId(null);
+    }
+  }, [projects, activeProjectId]);
+
+  const handleConnectSheets = async (projectId: string, spreadsheetInput?: string) => {
+    try {
+      setIsSyncing(true);
+      await syncService.connectProjectToSheets(projectId, spreadsheetInput);
+      await loadProjects();
+    } catch (error) {
+      console.error('Failed to connect to Google Sheets:', error);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Failed to connect to Google Sheets: ${message}`);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleSyncProject = async (projectId: string) => {
+    try {
+      setIsSyncing(true);
+      await syncService.pullProject(projectId);
+      await loadTasks(projectId);
+    } catch (error) {
+      console.error('Failed to sync with Google Sheets:', error);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -107,6 +146,10 @@ const App: React.FC = () => {
   useEffect(() => {
     if (activeProjectId) {
       loadTasks(activeProjectId);
+      // Auto-pull on selection
+      syncService.pullProject(activeProjectId)
+        .then(() => loadTasks(activeProjectId))
+        .catch(err => console.error('Auto-sync failed:', err));
     } else {
       setTasks([]);
     }
@@ -139,16 +182,18 @@ const App: React.FC = () => {
 
   const handleLogout = async () => {
     try {
-      if (currentUser?.id.startsWith('local:')) {
-        localStorage.removeItem('localUserId');
-        setCurrentUser(null);
-      } else {
-        await firebaseLogout();
-        localStorage.removeItem('localUserId');
-      }
+      const isLocal = currentUser?.id.startsWith('local:');
+      
+      // Reset state first to avoid race conditions with effects
+      setCurrentUser(null);
       setActiveProjectId(null);
       setProjects([]);
       setTasks([]);
+      localStorage.removeItem('localUserId');
+
+      if (!isLocal) {
+        await firebaseLogout();
+      }
     } catch (error) {
       console.error('Logout failed:', error);
     }
@@ -169,6 +214,7 @@ const App: React.FC = () => {
     await db.put('projects', newProject);
     await loadProjects();
     setActiveProjectId(newProject.id);
+    setActiveView('board');
   };
 
   const handleDeleteProject = async (projectId: string) => {
@@ -228,13 +274,19 @@ const App: React.FC = () => {
 
   const handleSaveTask = async (task: Task) => {
     await db.put('tasks', task);
-    if (activeProjectId) await loadTasks(activeProjectId);
+    if (activeProjectId) {
+      await loadTasks(activeProjectId);
+      syncService.pushProject(activeProjectId);
+    }
     setIsModalOpen(false);
   };
 
   const handleDeleteTask = async (id: string) => {
     await db.delete('tasks', id);
-    if (activeProjectId) await loadTasks(activeProjectId);
+    if (activeProjectId) {
+      await loadTasks(activeProjectId);
+      syncService.pushProject(activeProjectId);
+    }
     setIsModalOpen(false);
   };
 
@@ -260,10 +312,22 @@ const App: React.FC = () => {
       const updatedTasks = tasks.map(t => t.id === draggableId ? updatedTask : t);
       setTasks(updatedTasks);
       await db.put('tasks', updatedTask);
+      
+      if (activeProjectId) {
+        syncService.pushProject(activeProjectId);
+      }
     }
   };
 
   const activeProject = projects.find(p => p.id === activeProjectId);
+
+  useEffect(() => {
+    setSheetLinkInput(
+      activeProject?.spreadsheetId
+        ? `https://docs.google.com/spreadsheets/d/${activeProject.spreadsheetId}`
+        : ''
+    );
+  }, [activeProject?.id, activeProject?.spreadsheetId]);
 
   if (loading) {
     return (
@@ -333,10 +397,14 @@ const App: React.FC = () => {
         <Sidebar 
           projects={projects} 
           activeProjectId={activeProjectId} 
-          onSelectProject={setActiveProjectId}
+          onSelectProject={handleSelectProject}
           onAddProject={handleAddProject}
           onDeleteProject={handleDeleteProject}
           onLogout={handleLogout} 
+          onOpenSettings={() => setActiveView('settings')}
+          isSettingsActive={activeView === 'settings'}
+          onSyncProject={handleSyncProject}
+          isSyncing={isSyncing}
         />
         
         <Box 
@@ -351,7 +419,48 @@ const App: React.FC = () => {
             color: 'white'
           }}
         >
-          {activeProject ? (
+          {activeView === 'settings' ? (
+            <Box sx={{ maxWidth: 720, width: '100%', mx: 'auto', mt: 2 }}>
+              <Typography variant="h5" sx={{ fontWeight: 'bold', mb: 1 }}>
+                Project Settings
+              </Typography>
+              <Typography variant="body2" sx={{ opacity: 0.9, mb: 3 }}>
+                {activeProject ? `Configure sync for "${activeProject.name}"` : 'Select a project to configure sync settings.'}
+              </Typography>
+
+              {activeProject ? (
+                <Paper sx={{ p: 3 }}>
+                  <TextField
+                    fullWidth
+                    label="Google Sheet Link or Spreadsheet ID"
+                    value={sheetLinkInput}
+                    onChange={(e) => setSheetLinkInput(e.target.value)}
+                    placeholder="https://docs.google.com/spreadsheets/d/..."
+                    sx={{ mb: 2 }}
+                  />
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <Button
+                      variant="contained"
+                      disabled={isSyncing}
+                      onClick={() => handleConnectSheets(activeProject.id, sheetLinkInput)}
+                    >
+                      Save Sheet Config
+                    </Button>
+                    {activeProject.spreadsheetId && (
+                      <Button
+                        variant="outlined"
+                        onClick={() => window.open(`https://docs.google.com/spreadsheets/d/${activeProject.spreadsheetId}`, '_blank')}
+                      >
+                        Open Sheet
+                      </Button>
+                    )}
+                  </Box>
+                </Paper>
+              ) : (
+                <Typography variant="body1">No active project selected.</Typography>
+              )}
+            </Box>
+          ) : activeProject ? (
             <>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                 <Box>

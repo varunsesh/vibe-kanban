@@ -2,10 +2,16 @@ import React, { useState } from 'react';
 import { 
   Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, 
   Divider, IconButton, Box, Typography, Button, Dialog, DialogTitle,
-  DialogContent, DialogActions, TextField 
+  DialogContent, DialogActions, TextField, Tooltip 
 } from '@mui/material';
-import { Layout, Plus, LogOut, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
+import { Layout, Plus, LogOut, ChevronLeft, ChevronRight, Trash2, FileSpreadsheet, RefreshCw, Settings } from 'lucide-react';
+import { keyframes } from '@emotion/react';
 import { Project } from '../db/db';
+
+const spin = keyframes`
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+`;
 
 interface SidebarProps {
   projects: Project[];
@@ -14,10 +20,14 @@ interface SidebarProps {
   onAddProject: (name: string) => void;
   onDeleteProject: (id: string) => void;
   onLogout: () => void;
+  onOpenSettings: () => void;
+  isSettingsActive?: boolean;
+  onSyncProject?: (projectId: string) => void;
+  isSyncing?: boolean;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ 
-  projects, activeProjectId, onSelectProject, onAddProject, onDeleteProject, onLogout
+  projects, activeProjectId, onSelectProject, onAddProject, onDeleteProject, onLogout, onOpenSettings, isSettingsActive, onSyncProject, isSyncing
 }) => {
   const [open, setOpen] = useState(true);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -84,18 +94,54 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <Layout size={20} />
               </ListItemIcon>
               {open && <ListItemText primary={project.name} />}
+              
               {open && (
-                <IconButton
-                  size="small"
-                  aria-label={`Delete ${project.name}`}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setProjectToDelete(project);
-                  }}
-                >
-                  <Trash2 size={16} />
-                </IconButton>
+                <Box sx={{ display: 'flex' }}>
+                  {project.spreadsheetId ? (
+                    <>
+                      <Tooltip title="Refresh from Sheets">
+                        <IconButton
+                          size="small"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (onSyncProject) onSyncProject(project.id);
+                          }}
+                          disabled={isSyncing}
+                        >
+                          <RefreshCw 
+                            size={16} 
+                            style={{ 
+                              animation: isSyncing && activeProjectId === project.id ? `${spin} 2s linear infinite` : 'none' 
+                            }} 
+                          />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Open Google Sheet">
+                        <IconButton
+                          size="small"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            window.open(`https://docs.google.com/spreadsheets/d/${project.spreadsheetId}`, '_blank');
+                          }}
+                        >
+                          <FileSpreadsheet size={16} color="#0f9d58" />
+                        </IconButton>
+                      </Tooltip>
+                    </>
+                  ) : null}
+
+                  <IconButton
+                    size="small"
+                    aria-label={`Delete ${project.name}`}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setProjectToDelete(project);
+                    }}
+                  >
+                    <Trash2 size={16} />
+                  </IconButton>
+                </Box>
               )}
             </ListItemButton>
           </ListItem>
@@ -105,6 +151,18 @@ const Sidebar: React.FC<SidebarProps> = ({
       <Divider />
 
       <List>
+        <ListItem disablePadding sx={{ display: 'block' }}>
+          <ListItemButton
+            onClick={onOpenSettings}
+            selected={Boolean(isSettingsActive)}
+            sx={{ minHeight: 48, justifyContent: open ? 'initial' : 'center', px: 2.5 }}
+          >
+            <ListItemIcon sx={{ minWidth: 0, mr: open ? 3 : 'auto', justifyContent: 'center' }}>
+              <Settings size={20} />
+            </ListItemIcon>
+            {open && <ListItemText primary="Settings" />}
+          </ListItemButton>
+        </ListItem>
         <ListItem disablePadding sx={{ display: 'block' }}>
           <ListItemButton onClick={onLogout} sx={{ minHeight: 48, justifyContent: open ? 'initial' : 'center', px: 2.5 }}>
             <ListItemIcon sx={{ minWidth: 0, mr: open ? 3 : 'auto', justifyContent: 'center' }}>

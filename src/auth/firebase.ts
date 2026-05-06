@@ -15,10 +15,35 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
+const TOKEN_KEY = 'googleAccessToken';
+
+const setTokenStorage = (token: string) => {
+  sessionStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(TOKEN_KEY, token);
+  document.cookie = `${TOKEN_KEY}=${encodeURIComponent(token)}; path=/; max-age=2592000; samesite=lax`;
+};
+
+const clearTokenStorage = () => {
+  sessionStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(TOKEN_KEY);
+  document.cookie = `${TOKEN_KEY}=; path=/; max-age=0; samesite=lax`;
+};
+
+// Add scopes for Google Sheets and Drive
+provider.addScope('https://www.googleapis.com/auth/spreadsheets');
+provider.addScope('https://www.googleapis.com/auth/drive.file');
 
 export const signInWithGoogle = async (): Promise<FirebaseUser | null> => {
   try {
     const result = await signInWithPopup(auth, provider);
+    
+    // Capture the OAuth access token
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    const token = credential?.accessToken;
+    if (token) {
+      setTokenStorage(token);
+    }
+    
     return result.user;
   } catch (error) {
     console.error("Error signing in with Google:", error);
@@ -29,6 +54,7 @@ export const signInWithGoogle = async (): Promise<FirebaseUser | null> => {
 export const logout = async (): Promise<void> => {
   try {
     await signOut(auth);
+    clearTokenStorage();
   } catch (error) {
     console.error("Error signing out:", error);
     throw error;

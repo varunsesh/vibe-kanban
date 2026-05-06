@@ -15,6 +15,7 @@ export interface Project {
   name: string;
   description: string;
   columns: ColumnData[];
+  spreadsheetId?: string; // Link to Google Sheet
   createdAt: number;
 }
 
