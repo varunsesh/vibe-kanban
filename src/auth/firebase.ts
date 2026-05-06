@@ -32,6 +32,8 @@ const clearTokenStorage = () => {
 // Add scopes for Google Sheets and Drive
 provider.addScope('https://www.googleapis.com/auth/spreadsheets');
 provider.addScope('https://www.googleapis.com/auth/drive.file');
+// Always show the account chooser so users can switch Google accounts.
+provider.setCustomParameters({ prompt: 'select_account' });
 
 export const signInWithGoogle = async (): Promise<FirebaseUser | null> => {
   try {
