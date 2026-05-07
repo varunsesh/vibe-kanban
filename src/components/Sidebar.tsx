@@ -47,7 +47,7 @@ const Sidebar: React.FC = () => {
     setAddProjectDialogOpen(false);
   };
 
-  const canDeleteProject = (project: any) => {
+  const canDeleteProject = (project: { ownerId: string }) => {
     if (!currentUser) return false;
     return currentUser.globalRole === 'Admin' || project.ownerId === currentUser.id;
   };

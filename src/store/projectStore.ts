@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { DropResult } from '@hello-pangea/dnd';
-import { db, Project, Task, ProjectMember } from '../db/db';
+import { db, Project, Task, Release } from '../db/db';
 import { syncService } from '../services/SyncService';
 import { useAppStore } from './appStore';
 import { useUserStore } from './userStore';
@@ -8,12 +8,19 @@ import { useUserStore } from './userStore';
 interface ProjectState {
   projects: Project[];
   tasks: Task[];
+  releases: Release[];
   activeProjectId: string | null;
+  activeReleaseId: string | null;
   loadProjects: () => Promise<void>;
   loadTasks: (projectId: string) => Promise<void>;
+  loadReleases: (projectId: string) => Promise<void>;
   selectProject: (projectId: string) => Promise<void>;
+  selectRelease: (releaseId: string | null) => Promise<void>;
   addProject: (name: string) => Promise<void>;
   deleteProject: (projectId: string) => Promise<void>;
+  addRelease: (name: string, description?: string) => Promise<void>;
+  updateRelease: (release: Release) => Promise<void>;
+  deleteRelease: (releaseId: string) => Promise<void>;
   connectSheets: (projectId: string, spreadsheetInput?: string) => Promise<void>;
   syncFromSheets: (projectId: string) => Promise<void>;
   addColumn: () => Promise<void>;
@@ -58,7 +65,9 @@ const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\
 export const useProjectStore = create<ProjectState>((set, get) => ({
   projects: [],
   tasks: [],
+  releases: [],
   activeProjectId: null,
+  activeReleaseId: null,
   loadProjects: async () => {
     const allProjects = await db.getAll<Project>('projects');
     const currentUser = useUserStore.getState().currentUser;
@@ -91,22 +100,39 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     set({ projects, activeProjectId: nextActiveProjectId });
     if (nextActiveProjectId) {
-      const tasks = await db.getTasksByProject(nextActiveProjectId);
-      set({ tasks });
+      await get().loadReleases(nextActiveProjectId);
+      await get().loadTasks(nextActiveProjectId);
     } else {
-      set({ tasks: [] });
+      set({ tasks: [], releases: [], activeReleaseId: null });
     }
   },
   loadTasks: async (projectId: string) => {
-    const tasks = await db.getTasksByProject(projectId);
+    const { activeReleaseId } = get();
+    let tasks = await db.getTasksByProject(projectId);
+    if (activeReleaseId) {
+      tasks = tasks.filter(t => t.releaseId === activeReleaseId);
+    }
     set({ tasks });
   },
+  loadReleases: async (projectId: string) => {
+    const releases = await db.getReleasesByProject(projectId);
+    set({ releases });
+  },
   selectProject: async (projectId: string) => {
-    set({ activeProjectId: projectId });
+    set({ activeProjectId: projectId, activeReleaseId: null });
     useAppStore.getState().setActiveView('board');
+    await get().loadReleases(projectId);
     await get().loadTasks(projectId);
     await syncService.pullProject(projectId).catch(() => undefined);
+    await get().loadReleases(projectId);
     await get().loadTasks(projectId);
+  },
+  selectRelease: async (releaseId: string | null) => {
+    set({ activeReleaseId: releaseId });
+    const { activeProjectId } = get();
+    if (activeProjectId) {
+      await get().loadTasks(activeProjectId);
+    }
   },
   addProject: async (name: string) => {
     const currentUser = useUserStore.getState().currentUser;
@@ -130,8 +156,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     await db.put('projects', newProject);
     await get().loadProjects();
-    set({ activeProjectId: newProject.id });
+    set({ activeProjectId: newProject.id, activeReleaseId: null });
     useAppStore.getState().setActiveView('board');
+    await get().loadReleases(newProject.id);
     await get().loadTasks(newProject.id);
   },
   deleteProject: async (projectId: string) => {
@@ -145,15 +172,61 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
 
     await db.deleteTasksByProject(projectId);
+    await db.deleteReleasesByProject(projectId);
     await db.delete('projects', projectId);
     await get().loadProjects();
 
     if (activeProjectId === projectId) {
       const remainingProjects = projects.filter((project) => project.id !== projectId);
       const nextId = remainingProjects.length > 0 ? remainingProjects[0].id : null;
-      set({ activeProjectId: nextId, tasks: [] });
-      if (nextId) await get().loadTasks(nextId);
+      set({ activeProjectId: nextId, tasks: [], releases: [], activeReleaseId: null });
+      if (nextId) {
+        await get().loadReleases(nextId);
+        await get().loadTasks(nextId);
+      }
     }
+  },
+  addRelease: async (name: string, description?: string) => {
+    const { activeProjectId } = get();
+    if (!activeProjectId) return;
+
+    const newRelease: Release = {
+      id: Math.random().toString(36).substr(2, 9),
+      projectId: activeProjectId,
+      name,
+      description,
+      status: 'Planned',
+      createdAt: Date.now(),
+    };
+
+    await db.put('releases', newRelease);
+    await get().loadReleases(activeProjectId);
+  },
+  updateRelease: async (release: Release) => {
+    const { activeProjectId } = get();
+    if (!activeProjectId) return;
+
+    await db.put('releases', release);
+    await get().loadReleases(activeProjectId);
+  },
+  deleteRelease: async (releaseId: string) => {
+    const { activeProjectId, activeReleaseId } = get();
+    if (!activeProjectId) return;
+
+    // Optional: Unassign tasks from this release instead of deleting them
+    const tasks = await db.getTasksByProject(activeProjectId);
+    for (const task of tasks) {
+      if (task.releaseId === releaseId) {
+        await db.put('tasks', { ...task, releaseId: undefined });
+      }
+    }
+
+    await db.delete('releases', releaseId);
+    if (activeReleaseId === releaseId) {
+      set({ activeReleaseId: null });
+    }
+    await get().loadReleases(activeProjectId);
+    await get().loadTasks(activeProjectId);
   },
   connectSheets: async (projectId: string, spreadsheetInput?: string) => {
     const appStore = useAppStore.getState();
@@ -177,6 +250,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       await syncService.pullProject(projectId);
       await get().loadTasks(projectId);
+      await get().loadReleases(projectId);
     } finally {
       appStore.setSyncing(false);
     }
@@ -226,7 +300,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     return `${projectId}${suffix}`;
   },
   saveTask: async (task: Task) => {
-    const { activeProjectId } = get();
+    const { activeProjectId, activeReleaseId } = get();
     const currentUser = useUserStore.getState().currentUser;
     if (!currentUser) return;
 
@@ -235,6 +309,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const taskToSave = {
       ...task,
       createdBy: existing?.createdBy || currentUser.id,
+      releaseId: task.releaseId || (existing ? existing.releaseId : (activeReleaseId || undefined)),
     };
 
     await db.put('tasks', taskToSave);

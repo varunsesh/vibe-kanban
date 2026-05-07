@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
-  Button, TextField, MenuItem, Box, Typography, Avatar, Tooltip, Divider, List, ListItem, ListItemAvatar, ListItemText, IconButton
+  Button, TextField, MenuItem, Box, Typography, Avatar, Tooltip, List, ListItem, ListItemAvatar, ListItemText, IconButton
 } from '@mui/material';
 import { User as UserIcon, Send, MessageSquare } from 'lucide-react';
-import { Task, Comment } from '../db/db';
+import { Task } from '../db/db';
 import { useAppStore, buildEmptyTaskDraft } from '../store/appStore';
 import { useProjectStore, useCanDeleteTask, useProjectRole } from '../store/projectStore';
 import { useUserStore } from '../store/userStore';
@@ -31,7 +31,8 @@ const TaskModal: React.FC = () => {
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) || null;
-  const columns = activeProject?.columns || [];
+  const columns = React.useMemo(() => activeProject?.columns || [], [activeProject]);
+  const releases = useProjectStore((state) => state.releases);
   
   const canDelete = useCanDeleteTask(selectedTask);
   const userRole = useProjectRole(activeProjectId);
@@ -49,7 +50,7 @@ const TaskModal: React.FC = () => {
     const fallbackStatus = initialTaskStatus || (columns.length > 0 ? columns[0].id : '');
     const emptyDraft = buildEmptyTaskDraft(activeProjectId, fallbackStatus);
     setTaskDraft({ ...emptyDraft, createdBy: currentUser?.id || '' });
-  }, [isTaskModalOpen, selectedTaskId, activeProjectId, initialTaskStatus, columns.length, selectedTask, setTaskDraft, currentUser?.id]);
+  }, [isTaskModalOpen, selectedTaskId, activeProjectId, initialTaskStatus, columns, selectedTask, setTaskDraft, currentUser?.id]);
 
   const handleSave = async () => {
     if (!taskDraft.title) return;
@@ -239,6 +240,25 @@ const TaskModal: React.FC = () => {
                     </Avatar>
                     <Typography variant="body2">{user.displayName}</Typography>
                   </Box>
+                </MenuItem>
+              ))}
+            </TextField>
+
+            <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 1 }}>
+              RELEASE
+            </Typography>
+            <TextField
+              select
+              fullWidth
+              size="small"
+              value={taskDraft.releaseId || ''}
+              onChange={(event) => patchTaskDraft({ releaseId: event.target.value })}
+              sx={{ mb: 2 }}
+            >
+              <MenuItem value="">No Release</MenuItem>
+              {releases.map((release) => (
+                <MenuItem key={release.id} value={release.id}>
+                  {release.name}
                 </MenuItem>
               ))}
             </TextField>

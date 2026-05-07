@@ -30,9 +30,19 @@ export interface Comment {
   createdAt: number;
 }
 
+export interface Release {
+  id: string;
+  projectId: string;
+  name: string;
+  description?: string;
+  status: 'Planned' | 'In Progress' | 'Released' | 'Archived';
+  createdAt: number;
+}
+
 export interface Task {
   id: string;
   projectId: string;
+  releaseId?: string;
   title: string;
   description: string;
   status: string; // Changed from enum to string to support dynamic columns
@@ -45,7 +55,7 @@ export interface Task {
 }
 
 const DB_NAME = 'KanbanDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export class Database {
   private db: IDBDatabase | null = null;
@@ -72,10 +82,16 @@ export class Database {
         if (!db.objectStoreNames.contains('tasks')) {
           const taskStore = db.createObjectStore('tasks', { keyPath: 'id' });
           taskStore.createIndex('projectId', 'projectId', { unique: false });
+          taskStore.createIndex('releaseId', 'releaseId', { unique: false });
         }
 
         if (!db.objectStoreNames.contains('users')) {
           db.createObjectStore('users', { keyPath: 'id' });
+        }
+
+        if (!db.objectStoreNames.contains('releases')) {
+          const releaseStore = db.createObjectStore('releases', { keyPath: 'id' });
+          releaseStore.createIndex('projectId', 'projectId', { unique: false });
         }
       };
     });
@@ -137,11 +153,46 @@ export class Database {
     });
   }
 
+  async getReleasesByProject(projectId: string): Promise<Release[]> {
+    const db = await this.open();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction('releases', 'readonly');
+      const store = transaction.objectStore('releases');
+      const index = store.index('projectId');
+      const request = index.getAll(projectId);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
   async deleteTasksByProject(projectId: string): Promise<void> {
     const db = await this.open();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction('tasks', 'readwrite');
       const store = transaction.objectStore('tasks');
+      const index = store.index('projectId');
+      const request = index.openCursor(IDBKeyRange.only(projectId));
+
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (cursor) {
+          cursor.delete();
+          cursor.continue();
+        }
+      };
+
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  }
+
+  async deleteReleasesByProject(projectId: string): Promise<void> {
+    const db = await this.open();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction('releases', 'readwrite');
+      const store = transaction.objectStore('releases');
       const index = store.index('projectId');
       const request = index.openCursor(IDBKeyRange.only(projectId));
 

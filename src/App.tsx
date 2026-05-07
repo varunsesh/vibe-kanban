@@ -6,7 +6,9 @@ import { auth, onAuthStateChanged } from './auth/firebase';
 import Sidebar from './components/Sidebar';
 import Column from './components/Column';
 import TaskModal from './components/TaskModal';
-import { db, User, ProjectMember } from './db/db';
+import ReleaseTabs from './components/ReleaseTabs';
+import TaskListView from './components/TaskListView';
+import { db, User } from './db/db';
 import { useUserStore } from './store/userStore';
 import { useProjectStore, useCanEditProject } from './store/projectStore';
 import { useAppStore } from './store/appStore';
@@ -50,6 +52,7 @@ const App: React.FC = () => {
   const setSheetLinkInput = useAppStore((state) => state.setSheetLinkInput);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
+  const activeReleaseId = useProjectStore((state) => state.activeReleaseId);
   const canEditProject = useCanEditProject(activeProjectId);
 
   const [newMemberId, setNewMemberId] = useState('');
@@ -382,7 +385,7 @@ const App: React.FC = () => {
                         <Select
                           value={newMemberRole}
                           label="Assign Role"
-                          onChange={(e) => setNewMemberRole(e.target.value as any)}
+                          onChange={(e) => setNewMemberRole(e.target.value as 'Project Manager' | 'Member')}
                         >
                           <MenuItem value="Member">Project Member</MenuItem>
                           <MenuItem value="Project Manager">Project Manager</MenuItem>
@@ -474,9 +477,18 @@ const App: React.FC = () => {
                 )}
               </Box>
 
-              <DragDropContext onDragEnd={(result) => void onDragEnd(result)}>
-                <Column />
-              </DragDropContext>
+              <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1, overflow: 'hidden' }}>
+                <ReleaseTabs />
+                <Box sx={{ flexGrow: 1, overflowX: 'auto', p: 2 }}>
+                  {activeReleaseId ? (
+                    <DragDropContext onDragEnd={(result) => void onDragEnd(result)}>
+                      <Column />
+                    </DragDropContext>
+                  ) : (
+                    <TaskListView />
+                  )}
+                </Box>
+              </Box>
             </>
           ) : (
             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
