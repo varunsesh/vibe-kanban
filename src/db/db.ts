@@ -36,6 +36,7 @@ export interface Release {
   name: string;
   description?: string;
   status: 'Planned' | 'In Progress' | 'Released' | 'Archived';
+  order: number;
   createdAt: number;
 }
 

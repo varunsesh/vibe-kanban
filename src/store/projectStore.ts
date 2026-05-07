@@ -21,6 +21,7 @@ interface ProjectState {
   addRelease: (name: string, description?: string) => Promise<void>;
   updateRelease: (release: Release) => Promise<void>;
   deleteRelease: (releaseId: string) => Promise<void>;
+  reorderReleases: (startIndex: number, endIndex: number) => Promise<void>;
   connectSheets: (projectId: string, spreadsheetInput?: string) => Promise<void>;
   syncFromSheets: (projectId: string) => Promise<void>;
   addColumn: () => Promise<void>;
@@ -116,7 +117,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
   loadReleases: async (projectId: string) => {
     const releases = await db.getReleasesByProject(projectId);
-    set({ releases });
+    set({ releases: releases.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)) });
   },
   selectProject: async (projectId: string) => {
     set({ activeProjectId: projectId, activeReleaseId: null });
@@ -187,8 +188,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
   addRelease: async (name: string, description?: string) => {
-    const { activeProjectId } = get();
+    const { activeProjectId, releases } = get();
     if (!activeProjectId) return;
+
+    const maxOrder = releases.reduce((max, r) => Math.max(max, r.order ?? 0), -1);
 
     const newRelease: Release = {
       id: Math.random().toString(36).substr(2, 9),
@@ -196,6 +199,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       name,
       description,
       status: 'Planned',
+      order: maxOrder + 1,
       createdAt: Date.now(),
     };
 
@@ -227,6 +231,27 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
     await get().loadReleases(activeProjectId);
     await get().loadTasks(activeProjectId);
+  },
+  reorderReleases: async (startIndex: number, endIndex: number) => {
+    const { releases, activeProjectId } = get();
+    if (!activeProjectId) return;
+
+    const result = Array.from(releases);
+    const [removed] = result.splice(startIndex, 1);
+    result.splice(endIndex, 0, removed);
+
+    // Update orders
+    const updatedReleases = result.map((release, index) => ({
+      ...release,
+      order: index,
+    }));
+
+    set({ releases: updatedReleases });
+
+    // Persist to DB
+    for (const release of updatedReleases) {
+      await db.put('releases', release);
+    }
   },
   connectSheets: async (projectId: string, spreadsheetInput?: string) => {
     const appStore = useAppStore.getState();

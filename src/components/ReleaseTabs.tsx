@@ -4,6 +4,7 @@ import {
   DialogContent, DialogActions, TextField, Menu, MenuItem
 } from '@mui/material';
 import { Plus, X } from 'lucide-react';
+import { DragDropContext, Droppable, Draggable, DropResult, DraggableProvidedDraggableProps, DraggableProvidedDragHandleProps } from '@hello-pangea/dnd';
 import { useProjectStore, useCanEditProject } from '../store/projectStore';
 import { Release } from '../db/db';
 
@@ -15,6 +16,7 @@ const ReleaseTabs: React.FC = () => {
   const addRelease = useProjectStore((state) => state.addRelease);
   const updateRelease = useProjectStore((state) => state.updateRelease);
   const deleteRelease = useProjectStore((state) => state.deleteRelease);
+  const reorderReleases = useProjectStore((state) => state.reorderReleases);
   
   const canEdit = useCanEditProject(activeProjectId);
 
@@ -69,11 +71,26 @@ const ReleaseTabs: React.FC = () => {
     setContextMenu(null);
   };
 
-  const renderTab = (id: string | null, name: string, release?: Release) => {
+  const onDragEnd = (result: DropResult) => {
+    if (!result.destination) return;
+    reorderReleases(result.source.index, result.destination.index);
+  };
+
+  const renderTab = (
+    id: string | null, 
+    name: string, 
+    release?: Release, 
+    draggableProps?: DraggableProvidedDraggableProps, 
+    dragHandleProps?: DraggableProvidedDragHandleProps, 
+    innerRef?: (element: HTMLElement | null) => void
+  ) => {
     const isActive = activeReleaseId === id || (id === null && activeReleaseId === null);
     
     return (
       <Box
+        ref={innerRef}
+        {...draggableProps}
+        {...dragHandleProps}
         onClick={() => selectRelease(id)}
         onContextMenu={(e) => release && handleContextMenu(e, release)}
         sx={{
@@ -96,6 +113,7 @@ const ReleaseTabs: React.FC = () => {
           borderColor: 'divider',
           mr: -1.5, // Overlap for the trapezoid effect
           zIndex: isActive ? 2 : 1,
+          ...draggableProps?.sx
         }}
       >
         <Typography 
@@ -152,7 +170,34 @@ const ReleaseTabs: React.FC = () => {
 
         <Box sx={{ display: 'flex', flexGrow: 1, overflowX: 'auto', pb: 0, '&::-webkit-scrollbar': { display: 'none' } }}>
           {renderTab(null, 'All Tasks')}
-          {releases.map((release) => renderTab(release.id, release.name, release))}
+          
+          <DragDropContext onDragEnd={onDragEnd}>
+            <Droppable droppableId="release-tabs" direction="horizontal">
+              {(provided) => (
+                <Box
+                  ref={provided.innerRef}
+                  {...provided.droppableProps}
+                  sx={{ display: 'flex' }}
+                >
+                  {releases.map((release, index) => (
+                    <Draggable key={release.id} draggableId={release.id} index={index}>
+                      {(dragProvided) => (
+                        renderTab(
+                          release.id, 
+                          release.name, 
+                          release, 
+                          dragProvided.draggableProps, 
+                          dragProvided.dragHandleProps, 
+                          dragProvided.innerRef
+                        )
+                      )}
+                    </Draggable>
+                  ))}
+                  {provided.placeholder}
+                </Box>
+              )}
+            </Droppable>
+          </DragDropContext>
         </Box>
       </Box>
 
