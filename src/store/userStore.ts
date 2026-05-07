@@ -14,6 +14,7 @@ interface UserState {
   loginWithGoogle: () => Promise<void>;
   loginWithUsername: () => Promise<void>;
   logout: () => Promise<void>;
+  updateGlobalRole: (userId: string, role: 'Admin' | 'User') => Promise<void>;
 }
 
 export const useUserStore = create<UserState>((set, get) => ({
@@ -40,6 +41,7 @@ export const useUserStore = create<UserState>((set, get) => ({
       displayName: username,
       email: '',
       photoURL: '',
+      globalRole: username.toLowerCase() === 'admin' ? 'Admin' : 'User',
     };
 
     await db.put('users', user);
@@ -60,6 +62,19 @@ export const useUserStore = create<UserState>((set, get) => ({
       await auth.signOut().catch(() => {
         // Local users do not rely on Firebase sessions.
       });
+    }
+  },
+  updateGlobalRole: async (userId, role) => {
+    const user = await db.getById<User>('users', userId);
+    if (!user) return;
+
+    const updatedUser = { ...user, globalRole: role };
+    await db.put('users', updatedUser);
+    await get().loadUsers();
+
+    const { currentUser } = get();
+    if (currentUser?.id === userId) {
+      set({ currentUser: updatedUser });
     }
   },
 }));

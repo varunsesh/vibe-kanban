@@ -3,11 +3,12 @@ export interface User {
   displayName: string;
   email: string;
   photoURL: string;
+  globalRole?: 'Admin' | 'User';
 }
 
-export interface ColumnData {
-  id: string;
-  title: string;
+export interface ProjectMember {
+  userId: string;
+  role: 'Project Manager' | 'Member';
 }
 
 export interface Project {
@@ -16,6 +17,16 @@ export interface Project {
   description: string;
   columns: ColumnData[];
   spreadsheetId?: string; // Link to Google Sheet
+  ownerId: string;
+  members: ProjectMember[];
+  createdAt: number;
+}
+
+export interface Comment {
+  id: string;
+  taskId: string;
+  userId: string;
+  text: string;
   createdAt: number;
 }
 
@@ -28,7 +39,9 @@ export interface Task {
   priority: 'low' | 'medium' | 'high';
   dueDate?: number;
   assigneeId?: string;
+  createdBy: string;
   createdAt: number;
+  comments?: Comment[];
 }
 
 const DB_NAME = 'KanbanDB';

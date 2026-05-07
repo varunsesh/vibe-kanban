@@ -1,8 +1,9 @@
 import { create } from 'zustand';
 import { DropResult } from '@hello-pangea/dnd';
-import { db, Project, Task } from '../db/db';
+import { db, Project, Task, ProjectMember } from '../db/db';
 import { syncService } from '../services/SyncService';
 import { useAppStore } from './appStore';
+import { useUserStore } from './userStore';
 
 interface ProjectState {
   projects: Project[];
@@ -22,6 +23,9 @@ interface ProjectState {
   saveTask: (task: Task) => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
   moveTask: (result: DropResult) => Promise<void>;
+  addComment: (taskId: string, text: string) => Promise<void>;
+  addMember: (projectId: string, userId: string, role: 'Project Manager' | 'Member') => Promise<void>;
+  removeMember: (projectId: string, userId: string) => Promise<void>;
 }
 
 const sanitizeProjectName = (name: string) =>
@@ -57,14 +61,25 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   activeProjectId: null,
   loadProjects: async () => {
     const allProjects = await db.getAll<Project>('projects');
-    const projects = allProjects.map((project) => ({
-      ...project,
-      columns: project.columns || [
-        { id: 'todo', title: 'To Do' },
-        { id: 'inprogress', title: 'In Progress' },
-        { id: 'done', title: 'Done' },
-      ],
-    }));
+    const currentUser = useUserStore.getState().currentUser;
+    
+    // Filter projects based on roles/ownership
+    const projects = allProjects
+      .filter(p => {
+        if (!currentUser) return false;
+        if (currentUser.globalRole === 'Admin') return true;
+        if (p.ownerId === currentUser.id) return true;
+        return p.members?.some(m => m.userId === currentUser.id);
+      })
+      .map((project) => ({
+        ...project,
+        columns: project.columns || [
+          { id: 'todo', title: 'To Do' },
+          { id: 'inprogress', title: 'In Progress' },
+          { id: 'done', title: 'Done' },
+        ],
+        members: project.members || [],
+      }));
 
     const { activeProjectId } = get();
     let nextActiveProjectId = activeProjectId;
@@ -94,12 +109,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     await get().loadTasks(projectId);
   },
   addProject: async (name: string) => {
+    const currentUser = useUserStore.getState().currentUser;
+    if (!currentUser) return;
+
     const existingIds = new Set((await db.getAll<Project>('projects')).map((p) => p.id));
     const projectId = buildUniqueProjectId(name, existingIds);
     const newProject: Project = {
       id: projectId,
       name,
       description: '',
+      ownerId: currentUser.id,
+      members: [],
       columns: [
         { id: 'todo', title: 'To Do' },
         { id: 'inprogress', title: 'In Progress' },
@@ -116,6 +136,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
   deleteProject: async (projectId: string) => {
     const { projects, activeProjectId } = get();
+    const currentUser = useUserStore.getState().currentUser;
+    const project = projects.find(p => p.id === projectId);
+    
+    // Only Admin or Owner can delete
+    if (!currentUser || (currentUser.globalRole !== 'Admin' && project?.ownerId !== currentUser.id)) {
+      return;
+    }
+
     await db.deleteTasksByProject(projectId);
     await db.delete('projects', projectId);
     await get().loadProjects();
@@ -199,15 +227,42 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
   saveTask: async (task: Task) => {
     const { activeProjectId } = get();
-    await db.put('tasks', task);
+    const currentUser = useUserStore.getState().currentUser;
+    if (!currentUser) return;
+
+    // Set createdBy for new tasks
+    const existing = await db.getById<Task>('tasks', task.id);
+    const taskToSave = {
+      ...task,
+      createdBy: existing?.createdBy || currentUser.id,
+    };
+
+    await db.put('tasks', taskToSave);
     if (!activeProjectId) return;
     await get().loadTasks(activeProjectId);
     await syncService.pushProject(activeProjectId);
   },
   deleteTask: async (taskId: string) => {
-    const { activeProjectId } = get();
+    const { activeProjectId, tasks, projects } = get();
+    const currentUser = useUserStore.getState().currentUser;
+    if (!currentUser || !activeProjectId) return;
+
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    const project = projects.find(p => p.id === activeProjectId);
+    const userRole = project?.members.find(m => m.userId === currentUser.id)?.role;
+
+    // Permissions: Global Admin, PM of project, or Task Creator
+    const canDelete = 
+      currentUser.globalRole === 'Admin' ||
+      project?.ownerId === currentUser.id ||
+      userRole === 'Project Manager' ||
+      task.createdBy === currentUser.id;
+
+    if (!canDelete) return;
+
     await db.delete('tasks', taskId);
-    if (!activeProjectId) return;
     await get().loadTasks(activeProjectId);
     await syncService.pushProject(activeProjectId);
   },
@@ -233,4 +288,84 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       await syncService.pushProject(activeProjectId);
     }
   },
+  addComment: async (taskId: string, text: string) => {
+    const { activeProjectId, tasks } = get();
+    const currentUser = useUserStore.getState().currentUser;
+    if (!currentUser || !activeProjectId) return;
+
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    const newComment = {
+      id: Math.random().toString(36).substr(2, 9),
+      taskId,
+      userId: currentUser.id,
+      text,
+      createdAt: Date.now(),
+    };
+
+    const updatedTask = {
+      ...task,
+      comments: [...(task.comments || []), newComment],
+    };
+
+    await db.put('tasks', updatedTask);
+    await get().loadTasks(activeProjectId);
+    await syncService.pushProject(activeProjectId);
+  },
+  addMember: async (projectId: string, userId: string, role: 'Project Manager' | 'Member') => {
+    const project = await db.getById<Project>('projects', projectId);
+    if (!project) return;
+
+    const members = [...(project.members || [])];
+    const existingIndex = members.findIndex(m => m.userId === userId);
+    
+    if (existingIndex >= 0) {
+      members[existingIndex] = { userId, role };
+    } else {
+      members.push({ userId, role });
+    }
+
+    await db.put('projects', { ...project, members });
+    await get().loadProjects();
+    await syncService.pushProject(projectId);
+  },
+  removeMember: async (projectId: string, userId: string) => {
+    const project = await db.getById<Project>('projects', projectId);
+    if (!project) return;
+
+    const members = (project.members || []).filter(m => m.userId !== userId);
+    await db.put('projects', { ...project, members });
+    await get().loadProjects();
+    await syncService.pushProject(projectId);
+  },
 }));
+
+// Selectors for no prop-drilling
+export const useProjectRole = (projectId: string | null) => {
+  const currentUser = useUserStore(state => state.currentUser);
+  const project = useProjectStore(state => state.projects.find(p => p.id === projectId));
+  
+  if (!currentUser || !project) return null;
+  if (currentUser.globalRole === 'Admin' || project.ownerId === currentUser.id) return 'Project Manager';
+  
+  return project.members.find(m => m.userId === currentUser.id)?.role || null;
+};
+
+export const useCanEditProject = (projectId: string | null) => {
+  const role = useProjectRole(projectId);
+  return role === 'Project Manager';
+};
+
+export const useCanDeleteTask = (task: Task | null) => {
+  const currentUser = useUserStore(state => state.currentUser);
+  const role = useProjectRole(task?.projectId || null);
+  
+  if (!currentUser || !task) return false;
+  
+  return (
+    currentUser.globalRole === 'Admin' ||
+    role === 'Project Manager' ||
+    task.createdBy === currentUser.id
+  );
+};

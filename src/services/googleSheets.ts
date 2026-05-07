@@ -1,7 +1,7 @@
-import { Project, Task } from '../db/db';
+import { Project, Task, Comment } from '../db/db';
 
 const GOOGLE_API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets';
-const REQUIRED_SHEETS = ['Tasks', 'Config'];
+const REQUIRED_SHEETS = ['Tasks', 'Config', 'Members', 'Comments'];
 
 export class GoogleSheetsService {
   private readonly tokenKey = 'googleAccessToken';
@@ -67,10 +67,7 @@ export class GoogleSheetsService {
         properties: {
           title: `Vibe-Kanban: ${projectName}`,
         },
-        sheets: [
-          { properties: { title: 'Tasks' } },
-          { properties: { title: 'Config' } },
-        ],
+        sheets: REQUIRED_SHEETS.map(title => ({ properties: { title } })),
       }),
     });
     return data.spreadsheetId;
@@ -80,14 +77,22 @@ export class GoogleSheetsService {
     await this.ensureRequiredSheets(spreadsheetId);
 
     const taskHeaders = [
-      ['ID', 'ProjectID', 'Title', 'Description', 'Status', 'Priority', 'DueDate', 'AssigneeId', 'CreatedAt']
+      ['ID', 'ProjectID', 'Title', 'Description', 'Status', 'Priority', 'DueDate', 'AssigneeId', 'CreatedBy', 'CreatedAt']
     ];
     const configHeaders = [
-      ['ID', 'Name', 'Description', 'ColumnsJSON', 'CreatedAt']
+      ['ID', 'Name', 'Description', 'ColumnsJSON', 'OwnerID', 'CreatedAt']
+    ];
+    const memberHeaders = [
+      ['ProjectID', 'UserID', 'Role']
+    ];
+    const commentHeaders = [
+      ['ID', 'TaskID', 'UserID', 'Text', 'CreatedAt']
     ];
 
-    await this.updateValues(spreadsheetId, 'Tasks!A1:I1', taskHeaders);
-    await this.updateValues(spreadsheetId, 'Config!A1:E1', configHeaders);
+    await this.updateValues(spreadsheetId, 'Tasks!A1:J1', taskHeaders);
+    await this.updateValues(spreadsheetId, 'Config!A1:F1', configHeaders);
+    await this.updateValues(spreadsheetId, 'Members!A1:C1', memberHeaders);
+    await this.updateValues(spreadsheetId, 'Comments!A1:E1', commentHeaders);
   }
 
   private async ensureRequiredSheets(spreadsheetId: string) {
@@ -128,9 +133,37 @@ export class GoogleSheetsService {
       project.name,
       project.description,
       JSON.stringify(project.columns),
+      project.ownerId,
       project.createdAt
     ]];
-    await this.updateValues(project.spreadsheetId, 'Config!A2:E2', configData);
+    await this.updateValues(project.spreadsheetId, 'Config!A2:F2', configData);
+
+    // Sync Members
+    const memberData = (project.members || []).map(m => [
+      project.id,
+      m.userId,
+      m.role
+    ]);
+    if (memberData.length > 0) {
+      await this.updateValues(project.spreadsheetId, `Members!A2:C${memberData.length + 1}`, memberData);
+    }
+
+    // Sync Comments
+    const allComments: Comment[] = [];
+    tasks.forEach(t => {
+      if (t.comments) allComments.push(...t.comments);
+    });
+
+    const commentData = allComments.map(c => [
+      c.id,
+      c.taskId,
+      c.userId,
+      c.text,
+      c.createdAt
+    ]);
+    if (commentData.length > 0) {
+      await this.updateValues(project.spreadsheetId, `Comments!A2:E${commentData.length + 1}`, commentData);
+    }
 
     // Sync Tasks
     const taskData = tasks.map(task => [
@@ -142,19 +175,17 @@ export class GoogleSheetsService {
       task.priority,
       task.dueDate || '',
       task.assigneeId || '',
+      task.createdBy,
       task.createdAt
     ]);
 
-    // Clear existing tasks first or just overwrite. 
-    // For simplicity, we'll overwrite the range.
-    // In a production app, we'd manage rows more carefully.
     if (taskData.length > 0) {
-      await this.updateValues(project.spreadsheetId, `Tasks!A2:I${taskData.length + 1}`, taskData);
+      await this.updateValues(project.spreadsheetId, `Tasks!A2:J${taskData.length + 1}`, taskData);
     }
   }
 
   async pullTasks(spreadsheetId: string): Promise<Partial<Task>[]> {
-    const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values/Tasks!A2:I1000`;
+    const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values/Tasks!A2:J1000`;
     const data = await this.fetchGoogleApi(url);
     const rows = data.values || [];
 
@@ -167,8 +198,51 @@ export class GoogleSheetsService {
       priority: row[5] as any,
       dueDate: row[6] ? Number(row[6]) : undefined,
       assigneeId: row[7],
-      createdAt: Number(row[8]),
+      createdBy: row[8],
+      createdAt: Number(row[9]),
     }));
+  }
+
+  async pullMembers(spreadsheetId: string): Promise<any[]> {
+    const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values/Members!A2:C1000`;
+    const data = await this.fetchGoogleApi(url);
+    const rows = data.values || [];
+
+    return rows.map((row: any[]) => ({
+      projectId: row[0],
+      userId: row[1],
+      role: row[2],
+    }));
+  }
+
+  async pullComments(spreadsheetId: string): Promise<Comment[]> {
+    const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values/Comments!A2:E2000`;
+    const data = await this.fetchGoogleApi(url).catch(() => ({ values: [] }));
+    const rows = data.values || [];
+
+    return rows.map((row: any[]) => ({
+      id: row[0],
+      taskId: row[1],
+      userId: row[2],
+      text: row[3],
+      createdAt: Number(row[4]),
+    }));
+  }
+
+  async pullConfig(spreadsheetId: string): Promise<any> {
+    const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values/Config!A2:F2`;
+    const data = await this.fetchGoogleApi(url);
+    const row = data.values?.[0];
+    if (!row) return null;
+
+    return {
+      id: row[0],
+      name: row[1],
+      description: row[2],
+      columns: JSON.parse(row[3]),
+      ownerId: row[4],
+      createdAt: Number(row[5]),
+    };
   }
 }
 

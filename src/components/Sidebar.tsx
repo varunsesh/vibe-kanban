@@ -16,6 +16,7 @@ const spin = keyframes`
 `;
 
 const Sidebar: React.FC = () => {
+  const currentUser = useUserStore((state) => state.currentUser);
   const projects = useProjectStore((state) => state.projects);
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const selectProject = useProjectStore((state) => state.selectProject);
@@ -46,6 +47,11 @@ const Sidebar: React.FC = () => {
     setAddProjectDialogOpen(false);
   };
 
+  const canDeleteProject = (project: any) => {
+    if (!currentUser) return false;
+    return currentUser.globalRole === 'Admin' || project.ownerId === currentUser.id;
+  };
+
   return (
     <Drawer
       variant="permanent"
@@ -69,18 +75,33 @@ const Sidebar: React.FC = () => {
 
       <Divider />
 
-      <List>
-        <ListItem disablePadding sx={{ display: 'block' }}>
-          <ListItemButton onClick={() => setAddProjectDialogOpen(true)} sx={{ minHeight: 48, justifyContent: sidebarOpen ? 'initial' : 'center', px: 2.5 }}>
-            <ListItemIcon sx={{ minWidth: 0, mr: sidebarOpen ? 3 : 'auto', justifyContent: 'center' }}>
-              <Plus size={20} />
-            </ListItemIcon>
-            {sidebarOpen && <ListItemText primary="New Project" />}
-          </ListItemButton>
-        </ListItem>
-      </List>
-
-      <Divider />
+      {currentUser?.globalRole === 'Admin' && (
+        <>
+          <List>
+            <ListItem disablePadding sx={{ display: 'block' }}>
+              <ListItemButton onClick={() => setAddProjectDialogOpen(true)} sx={{ minHeight: 48, justifyContent: sidebarOpen ? 'initial' : 'center', px: 2.5 }}>
+                <ListItemIcon sx={{ minWidth: 0, mr: sidebarOpen ? 3 : 'auto', justifyContent: 'center' }}>
+                  <Plus size={20} />
+                </ListItemIcon>
+                {sidebarOpen && <ListItemText primary="New Project" />}
+              </ListItemButton>
+            </ListItem>
+            <ListItem disablePadding sx={{ display: 'block' }}>
+              <ListItemButton
+                onClick={() => setActiveView('settings')}
+                selected={activeView === 'settings'}
+                sx={{ minHeight: 48, justifyContent: sidebarOpen ? 'initial' : 'center', px: 2.5 }}
+              >
+                <ListItemIcon sx={{ minWidth: 0, mr: sidebarOpen ? 3 : 'auto', justifyContent: 'center' }}>
+                  <Settings size={20} />
+                </ListItemIcon>
+                {sidebarOpen && <ListItemText primary="Global Settings" />}
+              </ListItemButton>
+            </ListItem>
+          </List>
+          <Divider />
+        </>
+      )}
 
       <Box sx={{ px: 2, py: 1 }}>
         {sidebarOpen && <Typography variant="caption" sx={{ fontWeight: 'bold' }} color="text.secondary">PROJECTS</Typography>}
@@ -134,17 +155,33 @@ const Sidebar: React.FC = () => {
                     </>
                   ) : null}
 
-                  <IconButton
-                    size="small"
-                    aria-label={`Delete ${project.name}`}
-                    onMouseDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setProjectToDeleteId(project.id);
-                    }}
-                  >
-                    <Trash2 size={16} />
-                  </IconButton>
+                  {canDeleteProject(project) && (
+                    <>
+                      <Tooltip title="Project Settings">
+                        <IconButton
+                          size="small"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            selectProject(project.id);
+                            setActiveView('projectSettings');
+                          }}
+                        >
+                          <Settings size={16} />
+                        </IconButton>
+                      </Tooltip>
+                      <IconButton
+                        size="small"
+                        aria-label={`Delete ${project.name}`}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setProjectToDeleteId(project.id);
+                        }}
+                      >
+                        <Trash2 size={16} />
+                      </IconButton>
+                    </>
+                  )}
                 </Box>
               )}
             </ListItemButton>
@@ -155,18 +192,6 @@ const Sidebar: React.FC = () => {
       <Divider />
 
       <List>
-        <ListItem disablePadding sx={{ display: 'block' }}>
-          <ListItemButton
-            onClick={() => setActiveView('settings')}
-            selected={activeView === 'settings'}
-            sx={{ minHeight: 48, justifyContent: sidebarOpen ? 'initial' : 'center', px: 2.5 }}
-          >
-            <ListItemIcon sx={{ minWidth: 0, mr: sidebarOpen ? 3 : 'auto', justifyContent: 'center' }}>
-              <Settings size={20} />
-            </ListItemIcon>
-            {sidebarOpen && <ListItemText primary="Settings" />}
-          </ListItemButton>
-        </ListItem>
         <ListItem disablePadding sx={{ display: 'block' }}>
           <ListItemButton onClick={() => void logout()} sx={{ minHeight: 48, justifyContent: sidebarOpen ? 'initial' : 'center', px: 2.5 }}>
             <ListItemIcon sx={{ minWidth: 0, mr: sidebarOpen ? 3 : 'auto', justifyContent: 'center' }}>

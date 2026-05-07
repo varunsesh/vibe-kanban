@@ -1,14 +1,17 @@
-import { app as c, BrowserWindow as f } from "electron";
-import { fileURLToPath as u } from "node:url";
-import n from "node:path";
-import w from "node:http";
-import p from "node:fs";
-const m = n.dirname(u(import.meta.url));
-process.env.APP_ROOT = n.join(m, "..");
-const d = process.env.VITE_DEV_SERVER_URL, I = n.join(process.env.APP_ROOT, "dist-electron"), i = n.join(process.env.APP_ROOT, "dist");
-process.env.VITE_PUBLIC = d ? n.join(process.env.APP_ROOT, "public") : i;
-let s, e = null;
-const R = {
+import { app, BrowserWindow } from "electron";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import http from "node:http";
+import fs from "node:fs";
+const __dirname$1 = path.dirname(fileURLToPath(import.meta.url));
+process.env.APP_ROOT = path.join(__dirname$1, "..");
+const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
+const MAIN_DIST = path.join(process.env.APP_ROOT, "dist-electron");
+const RENDERER_DIST = path.join(process.env.APP_ROOT, "dist");
+process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, "public") : RENDERER_DIST;
+let win;
+let staticServer = null;
+const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
   ".mjs": "application/javascript; charset=utf-8",
@@ -22,64 +25,90 @@ const R = {
   ".woff": "font/woff",
   ".woff2": "font/woff2"
 };
-function g(t) {
-  const o = decodeURIComponent(t.split("?")[0]), r = n.normalize(o).replace(/^(\.\.(\/|\\|$))+/, ""), l = r === n.sep || r === "." ? "index.html" : r.replace(/^(\/|\\)/, ""), a = n.join(i, l);
-  return a.startsWith(i) ? !p.existsSync(a) || p.statSync(a).isDirectory() ? n.join(i, "index.html") : a : n.join(i, "index.html");
+function resolveRendererPath(urlPath) {
+  const pathname = decodeURIComponent(urlPath.split("?")[0]);
+  const normalizedPath = path.normalize(pathname).replace(/^(\.\.(\/|\\|$))+/, "");
+  const requestedPath = normalizedPath === path.sep || normalizedPath === "." ? "index.html" : normalizedPath.replace(/^(\/|\\)/, "");
+  const filePath = path.join(RENDERER_DIST, requestedPath);
+  if (!filePath.startsWith(RENDERER_DIST)) {
+    return path.join(RENDERER_DIST, "index.html");
+  }
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    return path.join(RENDERER_DIST, "index.html");
+  }
+  return filePath;
 }
-function j(t, o) {
-  const r = n.extname(o).toLowerCase(), l = R[r] || "application/octet-stream";
-  t.writeHead(200, { "Content-Type": l, "Cache-Control": "no-cache" }), p.createReadStream(o).pipe(t);
+function sendFile(res, filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const contentType = MIME_TYPES[ext] || "application/octet-stream";
+  res.writeHead(200, { "Content-Type": contentType, "Cache-Control": "no-cache" });
+  fs.createReadStream(filePath).pipe(res);
 }
-function P(t, o) {
+function handleRendererRequest(req, res) {
   try {
-    const r = g(t.url || "/");
-    j(o, r);
+    const filePath = resolveRendererPath(req.url || "/");
+    sendFile(res, filePath);
   } catch {
-    o.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" }), o.end("Failed to serve renderer");
+    res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("Failed to serve renderer");
   }
 }
-async function _() {
-  if (d)
-    return d;
-  if (e) {
-    const t = e.address();
-    if (t && typeof t != "string")
-      return `http://localhost:${t.port}`;
+async function getRendererUrl() {
+  if (VITE_DEV_SERVER_URL) {
+    return VITE_DEV_SERVER_URL;
   }
-  return e = w.createServer(P), await new Promise((t, o) => {
-    e == null || e.once("error", o), e == null || e.listen(0, "127.0.0.1", () => {
-      const r = e == null ? void 0 : e.address();
-      if (!r || typeof r == "string") {
-        o(new Error("Failed to resolve renderer server address"));
+  if (staticServer) {
+    const address = staticServer.address();
+    if (address && typeof address !== "string") {
+      return `http://localhost:${address.port}`;
+    }
+  }
+  staticServer = http.createServer(handleRendererRequest);
+  return await new Promise((resolve, reject) => {
+    staticServer == null ? void 0 : staticServer.once("error", reject);
+    staticServer == null ? void 0 : staticServer.listen(0, "127.0.0.1", () => {
+      const address = staticServer == null ? void 0 : staticServer.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("Failed to resolve renderer server address"));
         return;
       }
-      t(`http://localhost:${r.port}`);
+      resolve(`http://localhost:${address.port}`);
     });
   });
 }
-async function h() {
-  s = new f({
-    icon: n.join(process.env.VITE_PUBLIC, "electron-vite.svg"),
+async function createWindow() {
+  win = new BrowserWindow({
+    icon: path.join(process.env.VITE_PUBLIC, "electron-vite.svg"),
     webPreferences: {
-      preload: n.join(m, "preload.mjs")
+      preload: path.join(__dirname$1, "preload.mjs")
     }
-  }), s.webContents.on("did-finish-load", () => {
-    s == null || s.webContents.send("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
   });
-  const t = await _();
-  await s.loadURL(t);
+  win.webContents.on("did-finish-load", () => {
+    win == null ? void 0 : win.webContents.send("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
+  });
+  const rendererUrl = await getRendererUrl();
+  await win.loadURL(rendererUrl);
 }
-c.on("window-all-closed", () => {
-  e && (e.close(), e = null), process.platform !== "darwin" && (c.quit(), s = null);
+app.on("window-all-closed", () => {
+  if (staticServer) {
+    staticServer.close();
+    staticServer = null;
+  }
+  if (process.platform !== "darwin") {
+    app.quit();
+    win = null;
+  }
 });
-c.on("activate", () => {
-  f.getAllWindows().length === 0 && h();
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    void createWindow();
+  }
 });
-c.whenReady().then(() => {
-  h();
+app.whenReady().then(() => {
+  void createWindow();
 });
 export {
-  I as MAIN_DIST,
-  i as RENDERER_DIST,
-  d as VITE_DEV_SERVER_URL
+  MAIN_DIST,
+  RENDERER_DIST,
+  VITE_DEV_SERVER_URL
 };
