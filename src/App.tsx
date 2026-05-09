@@ -465,7 +465,7 @@ const App: React.FC = () => {
                     Signed in as {currentUser.displayName}
                   </Typography>
                 </Box>
-                {canEditProject && (
+                {canEditProject && activeReleaseId && (
                   <Button
                     variant="contained"
                     startIcon={<Plus />}

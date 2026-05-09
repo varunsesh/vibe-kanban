@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText,
   Divider, IconButton, Box, Typography, Button, Dialog, DialogTitle,
@@ -29,14 +29,47 @@ const Sidebar: React.FC = () => {
   const activeView = useAppStore((state) => state.activeView);
   const isSyncing = useAppStore((state) => state.isSyncing);
   const sidebarOpen = useAppStore((state) => state.sidebarOpen);
+  const sidebarWidth = useAppStore((state) => state.sidebarWidth);
   const addProjectDialogOpen = useAppStore((state) => state.addProjectDialogOpen);
   const newProjectName = useAppStore((state) => state.newProjectName);
   const projectToDeleteId = useAppStore((state) => state.projectToDeleteId);
   const setSidebarOpen = useAppStore((state) => state.setSidebarOpen);
+  const setSidebarWidth = useAppStore((state) => state.setSidebarWidth);
   const setActiveView = useAppStore((state) => state.setActiveView);
   const setAddProjectDialogOpen = useAppStore((state) => state.setAddProjectDialogOpen);
   const setNewProjectName = useAppStore((state) => state.setNewProjectName);
   const setProjectToDeleteId = useAppStore((state) => state.setProjectToDeleteId);
+
+  const [isResizing, setIsResizing] = useState(false);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+  }, []);
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!isResizing) return;
+    const newWidth = Math.max(160, Math.min(600, e.clientX));
+    setSidebarWidth(newWidth);
+  }, [isResizing, setSidebarWidth]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsResizing(false);
+  }, []);
+
+  useEffect(() => {
+    if (isResizing) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    } else {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing, handleMouseMove, handleMouseUp]);
 
   const projectToDelete = projects.find((project) => project.id === projectToDeleteId) || null;
 
@@ -52,17 +85,20 @@ const Sidebar: React.FC = () => {
     return currentUser.globalRole === 'Admin' || project.ownerId === currentUser.id;
   };
 
+  const currentWidth = sidebarOpen ? sidebarWidth : 64;
+
   return (
     <Drawer
       variant="permanent"
       sx={{
-        width: sidebarOpen ? 240 : 64,
+        width: currentWidth,
         flexShrink: 0,
         '& .MuiDrawer-paper': {
-          width: sidebarOpen ? 240 : 64,
+          width: currentWidth,
           boxSizing: 'border-box',
-          transition: 'width 0.2s ease',
+          transition: isResizing ? 'none' : 'width 0.2s ease',
           overflowX: 'hidden',
+          position: 'relative',
         },
       }}
     >
@@ -201,6 +237,25 @@ const Sidebar: React.FC = () => {
           </ListItemButton>
         </ListItem>
       </List>
+
+      {sidebarOpen && (
+        <Box
+          onMouseDown={handleMouseDown}
+          sx={{
+            position: 'absolute',
+            top: 0,
+            right: 0,
+            width: '4px',
+            height: '100%',
+            cursor: 'col-resize',
+            '&:hover': {
+              bgcolor: 'primary.main',
+              opacity: 0.5,
+            },
+            transition: 'background-color 0.2s',
+          }}
+        />
+      )}
 
       <Dialog open={addProjectDialogOpen} onClose={() => setAddProjectDialogOpen(false)}>
         <DialogTitle>Create New Project</DialogTitle>

@@ -17,6 +17,7 @@ interface AppState {
   newProjectName: string;
   projectToDeleteId: string | null;
   taskDraft: Partial<Task>;
+  sidebarWidth: number;
   setActiveView: (view: ActiveView) => void;
   setSyncing: (syncing: boolean) => void;
   setSheetLinkInput: (value: string) => void;
@@ -26,6 +27,7 @@ interface AppState {
   setColumnTitleDraft: (value: string) => void;
   stopColumnRename: () => void;
   setSidebarOpen: (value: boolean) => void;
+  setSidebarWidth: (value: number) => void;
   setAddProjectDialogOpen: (value: boolean) => void;
   setNewProjectName: (value: string) => void;
   setProjectToDeleteId: (value: string | null) => void;
@@ -47,6 +49,7 @@ export const useAppStore = create<AppState>((set) => ({
   newProjectName: '',
   projectToDeleteId: null,
   taskDraft: {},
+  sidebarWidth: 240,
   setActiveView: (activeView) => set({ activeView }),
   setSyncing: (isSyncing) => set({ isSyncing }),
   setSheetLinkInput: (sheetLinkInput) => set({ sheetLinkInput }),
@@ -67,6 +70,7 @@ export const useAppStore = create<AppState>((set) => ({
   setColumnTitleDraft: (columnTitleDraft) => set({ columnTitleDraft }),
   stopColumnRename: () => set({ columnEditingId: null, columnTitleDraft: '' }),
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
+  setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
   setAddProjectDialogOpen: (addProjectDialogOpen) => set({ addProjectDialogOpen }),
   setNewProjectName: (newProjectName) => set({ newProjectName }),
   setProjectToDeleteId: (projectToDeleteId) => set({ projectToDeleteId }),
