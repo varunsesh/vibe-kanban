@@ -1,4 +1,4 @@
-import { db, Project, Task } from '../db/db';
+import { db, Project, Task, User } from '../db/db';
 import { googleSheetsService } from './googleSheets';
 
 export class SyncService {
@@ -26,7 +26,8 @@ export class SyncService {
 
     // Initial push of all tasks
     const tasks = await db.getTasksByProject(projectId);
-    await googleSheetsService.syncProject(updatedProject, tasks);
+    const users = await db.getAll<User>('users');
+    await googleSheetsService.syncProject(updatedProject, tasks, users);
 
     return spreadsheetId;
   }
@@ -34,9 +35,10 @@ export class SyncService {
   async pushProject(projectId: string) {
     const project = await db.getById<Project>('projects', projectId);
     const tasks = await db.getTasksByProject(projectId);
+    const users = await db.getAll<User>('users');
 
     if (project && project.spreadsheetId) {
-      await googleSheetsService.syncProject(project, tasks);
+      await googleSheetsService.syncProject(project, tasks, users);
     }
   }
 

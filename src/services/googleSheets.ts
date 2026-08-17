@@ -86,13 +86,13 @@ export class GoogleSheetsService {
       ['ProjectID', 'UserID', 'Role']
     ];
     const commentHeaders = [
-      ['ID', 'TaskID', 'UserID', 'Text', 'CreatedAt']
+      ['ID', 'TaskID', 'UserID', 'UserName', 'Text', 'CreatedAt']
     ];
 
     await this.updateValues(spreadsheetId, 'Tasks!A1:J1', taskHeaders);
     await this.updateValues(spreadsheetId, 'Config!A1:F1', configHeaders);
     await this.updateValues(spreadsheetId, 'Members!A1:C1', memberHeaders);
-    await this.updateValues(spreadsheetId, 'Comments!A1:E1', commentHeaders);
+    await this.updateValues(spreadsheetId, 'Comments!A1:F1', commentHeaders);
   }
 
   private async ensureRequiredSheets(spreadsheetId: string) {
@@ -124,7 +124,7 @@ export class GoogleSheetsService {
     });
   }
 
-  async syncProject(project: Project, tasks: Task[]) {
+  async syncProject(project: Project, tasks: Task[], users: any[]) {
     if (!project.spreadsheetId) return;
 
     // Sync Config
@@ -154,15 +154,19 @@ export class GoogleSheetsService {
       if (t.comments) allComments.push(...t.comments);
     });
 
-    const commentData = allComments.map(c => [
-      c.id,
-      c.taskId,
-      c.userId,
-      c.text,
-      c.createdAt
-    ]);
+    const commentData = allComments.map(c => {
+      const user = users.find(u => u.id === c.userId);
+      return [
+        c.id,
+        c.taskId,
+        c.userId,
+        user?.displayName || 'Unknown',
+        c.text,
+        c.createdAt
+      ];
+    });
     if (commentData.length > 0) {
-      await this.updateValues(project.spreadsheetId, `Comments!A2:E${commentData.length + 1}`, commentData);
+      await this.updateValues(project.spreadsheetId, `Comments!A2:F${commentData.length + 1}`, commentData);
     }
 
     // Sync Tasks
@@ -216,7 +220,7 @@ export class GoogleSheetsService {
   }
 
   async pullComments(spreadsheetId: string): Promise<Comment[]> {
-    const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values/Comments!A2:E2000`;
+    const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values/Comments!A2:F2000`;
     const data = await this.fetchGoogleApi(url).catch(() => ({ values: [] }));
     const rows = data.values || [];
 
@@ -224,8 +228,8 @@ export class GoogleSheetsService {
       id: row[0],
       taskId: row[1],
       userId: row[2],
-      text: row[3],
-      createdAt: Number(row[4]),
+      text: row[4],
+      createdAt: Number(row[5]),
     }));
   }
 
