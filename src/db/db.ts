@@ -21,7 +21,8 @@ export interface Project {
   name: string;
   description: string;
   columns: ColumnData[];
-  spreadsheetId?: string; // Link to Google Sheet
+  spreadsheetId?: string;
+  lastSyncedAt?: number; // timestamp of last successful push to the linked sheet (per device)
   ownerId: string;
   members: ProjectMember[];
   createdAt: number;

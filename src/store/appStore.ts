@@ -49,7 +49,7 @@ export const useAppStore = create<AppState>((set) => ({
   newProjectName: '',
   projectToDeleteId: null,
   taskDraft: {},
-  sidebarWidth: 240,
+  sidebarWidth: 260,
   setActiveView: (activeView) => set({ activeView }),
   setSyncing: (isSyncing) => set({ isSyncing }),
   setSheetLinkInput: (sheetLinkInput) => set({ sheetLinkInput }),

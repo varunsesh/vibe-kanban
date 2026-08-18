@@ -1,7 +1,7 @@
 import { Project, Task, Comment } from '../db/db';
 
 const GOOGLE_API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets';
-const REQUIRED_SHEETS = ['Tasks', 'Config', 'Members', 'Comments'];
+const REQUIRED_SHEETS = ['Tasks', 'Config', 'Members', 'Comments', 'lastUpdated'];
 
 export class GoogleSheetsService {
   private readonly tokenKey = 'googleAccessToken';
@@ -206,6 +206,17 @@ export class GoogleSheetsService {
       text: row[4],
       createdAt: Number(row[5]),
     }));
+  }
+
+  async getLastUpdated(spreadsheetId: string): Promise<number> {
+    const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values/lastUpdated!A1`;
+    const data = await this.fetchGoogleApi(url).catch(() => ({ values: [] }));
+    const value = data.values?.[0]?.[0];
+    return value ? Number(value) : 0;
+  }
+
+  async setLastUpdated(spreadsheetId: string, timestamp: number): Promise<void> {
+    await this.updateValues(spreadsheetId, 'lastUpdated!A1', [[timestamp]]);
   }
 
   async pullConfig(spreadsheetId: string): Promise<any> {

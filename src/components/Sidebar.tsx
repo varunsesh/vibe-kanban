@@ -154,33 +154,49 @@ const Sidebar: React.FC = () => {
             <ListItemButton
               selected={activeProjectId === project.id && activeView !== 'settings'}
               onClick={() => selectProject(project.id)}
-              sx={{ minHeight: 48, justifyContent: sidebarOpen ? 'initial' : 'center', px: 2.5 }}
+              sx={{
+                minHeight: 48,
+                justifyContent: sidebarOpen ? 'initial' : 'center',
+                px: 2.5,
+                '&:hover .project-actions': { opacity: 1 },
+              }}
             >
-              <ListItemIcon sx={{ minWidth: 0, mr: sidebarOpen ? 3 : 'auto', justifyContent: 'center' }}>
+              <ListItemIcon sx={{ minWidth: 0, mr: sidebarOpen ? 3 : 'auto', justifyContent: 'center', flexShrink: 0 }}>
                 <Layout size={20} />
               </ListItemIcon>
-              {sidebarOpen && <ListItemText primary={project.name} />}
+              {sidebarOpen && (
+                <ListItemText
+                  primary={project.name}
+                  slotProps={{ primary: { noWrap: true } }}
+                  sx={{ overflow: 'hidden', mr: 1 }}
+                />
+              )}
 
               {sidebarOpen && (
-                <Box sx={{ display: 'flex' }}>
+                <Box
+                  className="project-actions"
+                  sx={{ display: 'flex', flexShrink: 0, opacity: 0, transition: 'opacity 0.15s' }}
+                >
                   {project.spreadsheetId ? (
                     <>
                       <Tooltip title="Refresh from Sheets">
-                        <IconButton
-                          size="small"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void syncFromSheets(project.id);
-                          }}
-                          disabled={isSyncing}
-                        >
-                          <RefreshCw
-                            size={16}
-                            style={{
-                              animation: isSyncing && activeProjectId === project.id ? `${spin} 2s linear infinite` : 'none',
+                        <span>
+                          <IconButton
+                            size="small"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void syncFromSheets(project.id);
                             }}
-                          />
-                        </IconButton>
+                            disabled={isSyncing}
+                          >
+                            <RefreshCw
+                              size={16}
+                              style={{
+                                animation: isSyncing && activeProjectId === project.id ? `${spin} 2s linear infinite` : 'none',
+                              }}
+                            />
+                          </IconButton>
+                        </span>
                       </Tooltip>
                       <Tooltip title="Open Google Sheet">
                         <IconButton
