@@ -11,6 +11,11 @@ export interface ProjectMember {
   role: 'Project Manager' | 'Member';
 }
 
+export interface ColumnData {
+  id: string;
+  title: string;
+}
+
 export interface Project {
   id: string;
   name: string;

@@ -75,24 +75,12 @@ export class GoogleSheetsService {
 
   async setupHeaders(spreadsheetId: string) {
     await this.ensureRequiredSheets(spreadsheetId);
-
-    const taskHeaders = [
-      ['ID', 'ProjectID', 'Title', 'Description', 'Status', 'Priority', 'DueDate', 'AssigneeId', 'CreatedBy', 'CreatedAt']
-    ];
-    const configHeaders = [
-      ['ID', 'Name', 'Description', 'ColumnsJSON', 'OwnerID', 'CreatedAt']
-    ];
-    const memberHeaders = [
-      ['ProjectID', 'UserID', 'Role']
-    ];
-    const commentHeaders = [
-      ['ID', 'TaskID', 'UserID', 'UserName', 'Text', 'CreatedAt']
-    ];
-
-    await this.updateValues(spreadsheetId, 'Tasks!A1:J1', taskHeaders);
-    await this.updateValues(spreadsheetId, 'Config!A1:F1', configHeaders);
-    await this.updateValues(spreadsheetId, 'Members!A1:C1', memberHeaders);
-    await this.updateValues(spreadsheetId, 'Comments!A1:F1', commentHeaders);
+    await this.batchUpdateValues(spreadsheetId, [
+      { range: 'Tasks!A1:J1',    values: [['ID', 'ProjectID', 'Title', 'Description', 'Status', 'Priority', 'DueDate', 'AssigneeId', 'CreatedBy', 'CreatedAt']] },
+      { range: 'Config!A1:F1',   values: [['ID', 'Name', 'Description', 'ColumnsJSON', 'OwnerID', 'CreatedAt']] },
+      { range: 'Members!A1:C1',  values: [['ProjectID', 'UserID', 'Role']] },
+      { range: 'Comments!A1:F1', values: [['ID', 'TaskID', 'UserID', 'UserName', 'Text', 'CreatedAt']] },
+    ]);
   }
 
   private async ensureRequiredSheets(spreadsheetId: string) {
@@ -124,68 +112,57 @@ export class GoogleSheetsService {
     });
   }
 
+  async batchUpdateValues(spreadsheetId: string, data: { range: string; values: any[][] }[]) {
+    const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values:batchUpdate`;
+    return this.fetchGoogleApi(url, {
+      method: 'POST',
+      body: JSON.stringify({ valueInputOption: 'RAW', data }),
+    });
+  }
+
+  async batchClearRanges(spreadsheetId: string, ranges: string[]) {
+    const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values:batchClear`;
+    return this.fetchGoogleApi(url, {
+      method: 'POST',
+      body: JSON.stringify({ ranges }),
+    });
+  }
+
   async syncProject(project: Project, tasks: Task[], users: any[]) {
     if (!project.spreadsheetId) return;
+    const id = project.spreadsheetId;
 
-    // Sync Config
-    const configData = [[
-      project.id,
-      project.name,
-      project.description,
-      JSON.stringify(project.columns),
-      project.ownerId,
-      project.createdAt
-    ]];
-    await this.updateValues(project.spreadsheetId, 'Config!A2:F2', configData);
-
-    // Sync Members
-    const memberData = (project.members || []).map(m => [
-      project.id,
-      m.userId,
-      m.role
+    // Clear all data rows in one request so deleted records don't persist
+    await this.batchClearRanges(id, [
+      'Tasks!A2:J100000',
+      'Members!A2:C10000',
+      'Comments!A2:F100000',
     ]);
-    if (memberData.length > 0) {
-      await this.updateValues(project.spreadsheetId, `Members!A2:C${memberData.length + 1}`, memberData);
-    }
 
-    // Sync Comments
-    const allComments: Comment[] = [];
-    tasks.forEach(t => {
-      if (t.comments) allComments.push(...t.comments);
-    });
-
+    const memberData = (project.members || []).map(m => [project.id, m.userId, m.role]);
+    const allComments: Comment[] = tasks.flatMap(t => t.comments || []);
     const commentData = allComments.map(c => {
-      const user = users.find(u => u.id === c.userId);
-      return [
-        c.id,
-        c.taskId,
-        c.userId,
-        user?.displayName || 'Unknown',
-        c.text,
-        c.createdAt
-      ];
+      const user = users.find((u: { id: string; displayName: string }) => u.id === c.userId);
+      return [c.id, c.taskId, c.userId, user?.displayName || 'Unknown', c.text, c.createdAt];
     });
-    if (commentData.length > 0) {
-      await this.updateValues(project.spreadsheetId, `Comments!A2:F${commentData.length + 1}`, commentData);
-    }
-
-    // Sync Tasks
     const taskData = tasks.map(task => [
-      task.id,
-      task.projectId,
-      task.title,
-      task.description,
-      task.status,
-      task.priority,
-      task.dueDate || '',
-      task.assigneeId || '',
-      task.createdBy,
-      task.createdAt
+      task.id, task.projectId, task.title, task.description,
+      task.status, task.priority, task.dueDate || '',
+      task.assigneeId || '', task.createdBy, task.createdAt,
     ]);
 
-    if (taskData.length > 0) {
-      await this.updateValues(project.spreadsheetId, `Tasks!A2:J${taskData.length + 1}`, taskData);
-    }
+    // Write all data in one batch request
+    const updates: { range: string; values: any[][] }[] = [
+      { range: 'Config!A2:F2', values: [[
+          project.id, project.name, project.description,
+          JSON.stringify(project.columns), project.ownerId, project.createdAt,
+        ]] },
+    ];
+    if (memberData.length > 0)  updates.push({ range: `Members!A2:C${memberData.length + 1}`,   values: memberData });
+    if (commentData.length > 0) updates.push({ range: `Comments!A2:F${commentData.length + 1}`, values: commentData });
+    if (taskData.length > 0)    updates.push({ range: `Tasks!A2:J${taskData.length + 1}`,       values: taskData });
+
+    await this.batchUpdateValues(id, updates);
   }
 
   async pullTasks(spreadsheetId: string): Promise<Partial<Task>[]> {
@@ -207,16 +184,14 @@ export class GoogleSheetsService {
     }));
   }
 
-  async pullMembers(spreadsheetId: string): Promise<any[]> {
+  async pullMembers(spreadsheetId: string): Promise<{ userId: string; role: string }[]> {
     const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values/Members!A2:C1000`;
-    const data = await this.fetchGoogleApi(url);
-    const rows = data.values || [];
+    const data = await this.fetchGoogleApi(url).catch(() => ({ values: [] }));
+    const rows: any[][] = data.values || [];
 
-    return rows.map((row: any[]) => ({
-      projectId: row[0],
-      userId: row[1],
-      role: row[2],
-    }));
+    return rows
+      .filter(row => row[1])
+      .map(row => ({ userId: row[1], role: row[2] }));
   }
 
   async pullComments(spreadsheetId: string): Promise<Comment[]> {

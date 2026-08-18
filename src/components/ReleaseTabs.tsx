@@ -111,17 +111,16 @@ const ReleaseTabs: React.FC = () => {
           },
           borderBottom: isActive ? 'none' : '1px solid',
           borderColor: 'divider',
-          mr: -1.5, // Overlap for the trapezoid effect
+          mr: -1.5,
           zIndex: isActive ? 2 : 1,
-          ...draggableProps?.sx
         }}
       >
-        <Typography 
-          variant="body2" 
-          sx={{ 
+        <Typography
+          variant="body2"
+          noWrap
+          sx={{
             fontWeight: isActive ? 600 : 400,
             color: isActive ? 'primary.main' : 'text.secondary',
-            noWrap: true,
             flexGrow: 1,
             textAlign: 'center',
             fontSize: '0.8rem'
@@ -187,7 +186,7 @@ const ReleaseTabs: React.FC = () => {
                           release.name, 
                           release, 
                           dragProvided.draggableProps, 
-                          dragProvided.dragHandleProps, 
+                          dragProvided.dragHandleProps ?? undefined,
                           dragProvided.innerRef
                         )
                       )}

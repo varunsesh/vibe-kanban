@@ -80,6 +80,13 @@ const Sidebar: React.FC = () => {
     setAddProjectDialogOpen(false);
   };
 
+  const canManageProject = (project: { ownerId: string; members: { userId: string; role: string }[] }) => {
+    if (!currentUser) return false;
+    if (currentUser.globalRole === 'Admin') return true;
+    if (project.ownerId === currentUser.id) return true;
+    return project.members?.some(m => m.userId === currentUser.id && m.role === 'Project Manager') ?? false;
+  };
+
   const canDeleteProject = (project: { ownerId: string }) => {
     if (!currentUser) return false;
     return currentUser.globalRole === 'Admin' || project.ownerId === currentUser.id;
@@ -111,33 +118,31 @@ const Sidebar: React.FC = () => {
 
       <Divider />
 
-      {currentUser?.globalRole === 'Admin' && (
-        <>
-          <List>
-            <ListItem disablePadding sx={{ display: 'block' }}>
-              <ListItemButton onClick={() => setAddProjectDialogOpen(true)} sx={{ minHeight: 48, justifyContent: sidebarOpen ? 'initial' : 'center', px: 2.5 }}>
-                <ListItemIcon sx={{ minWidth: 0, mr: sidebarOpen ? 3 : 'auto', justifyContent: 'center' }}>
-                  <Plus size={20} />
-                </ListItemIcon>
-                {sidebarOpen && <ListItemText primary="New Project" />}
-              </ListItemButton>
-            </ListItem>
-            <ListItem disablePadding sx={{ display: 'block' }}>
-              <ListItemButton
-                onClick={() => setActiveView('settings')}
-                selected={activeView === 'settings'}
-                sx={{ minHeight: 48, justifyContent: sidebarOpen ? 'initial' : 'center', px: 2.5 }}
-              >
-                <ListItemIcon sx={{ minWidth: 0, mr: sidebarOpen ? 3 : 'auto', justifyContent: 'center' }}>
-                  <Settings size={20} />
-                </ListItemIcon>
-                {sidebarOpen && <ListItemText primary="Global Settings" />}
-              </ListItemButton>
-            </ListItem>
-          </List>
-          <Divider />
-        </>
-      )}
+      <List>
+        <ListItem disablePadding sx={{ display: 'block' }}>
+          <ListItemButton onClick={() => setAddProjectDialogOpen(true)} sx={{ minHeight: 48, justifyContent: sidebarOpen ? 'initial' : 'center', px: 2.5 }}>
+            <ListItemIcon sx={{ minWidth: 0, mr: sidebarOpen ? 3 : 'auto', justifyContent: 'center' }}>
+              <Plus size={20} />
+            </ListItemIcon>
+            {sidebarOpen && <ListItemText primary="New Project" />}
+          </ListItemButton>
+        </ListItem>
+        {currentUser?.globalRole === 'Admin' && (
+          <ListItem disablePadding sx={{ display: 'block' }}>
+            <ListItemButton
+              onClick={() => setActiveView('settings')}
+              selected={activeView === 'settings'}
+              sx={{ minHeight: 48, justifyContent: sidebarOpen ? 'initial' : 'center', px: 2.5 }}
+            >
+              <ListItemIcon sx={{ minWidth: 0, mr: sidebarOpen ? 3 : 'auto', justifyContent: 'center' }}>
+                <Settings size={20} />
+              </ListItemIcon>
+              {sidebarOpen && <ListItemText primary="Global Settings" />}
+            </ListItemButton>
+          </ListItem>
+        )}
+      </List>
+      <Divider />
 
       <Box sx={{ px: 2, py: 1 }}>
         {sidebarOpen && <Typography variant="caption" sx={{ fontWeight: 'bold' }} color="text.secondary">PROJECTS</Typography>}
@@ -191,32 +196,32 @@ const Sidebar: React.FC = () => {
                     </>
                   ) : null}
 
-                  {canDeleteProject(project) && (
-                    <>
-                      <Tooltip title="Project Settings">
-                        <IconButton
-                          size="small"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            selectProject(project.id);
-                            setActiveView('projectSettings');
-                          }}
-                        >
-                          <Settings size={16} />
-                        </IconButton>
-                      </Tooltip>
+                  {canManageProject(project) && (
+                    <Tooltip title="Project Settings">
                       <IconButton
                         size="small"
-                        aria-label={`Delete ${project.name}`}
-                        onMouseDown={(event) => event.stopPropagation()}
                         onClick={(event) => {
                           event.stopPropagation();
-                          setProjectToDeleteId(project.id);
+                          selectProject(project.id);
+                          setActiveView('projectSettings');
                         }}
                       >
-                        <Trash2 size={16} />
+                        <Settings size={16} />
                       </IconButton>
-                    </>
+                    </Tooltip>
+                  )}
+                  {canDeleteProject(project) && (
+                    <IconButton
+                      size="small"
+                      aria-label={`Delete ${project.name}`}
+                      onMouseDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setProjectToDeleteId(project.id);
+                      }}
+                    >
+                      <Trash2 size={16} />
+                    </IconButton>
                   )}
                 </Box>
               )}

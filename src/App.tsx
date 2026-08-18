@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Box, Typography, CssBaseline, ThemeProvider, createTheme, Button, Paper, TextField, Divider, List, ListItem, ListItemText, ListItemSecondaryAction, IconButton, Select, MenuItem, FormControl, InputLabel, Chip } from '@mui/material';
 import { DragDropContext, DropResult } from '@hello-pangea/dnd';
 import { LogIn, Plus, Trash2, UserPlus, FileSpreadsheet, RefreshCw, ShieldCheck, ShieldAlert } from 'lucide-react';
-import { auth, onAuthStateChanged } from './auth/firebase';
+import { auth, onAuthStateChanged, handleRedirectResult } from './auth/firebase';
 import Sidebar from './components/Sidebar';
 import Column from './components/Column';
 import TaskModal from './components/TaskModal';
@@ -59,6 +59,9 @@ const App: React.FC = () => {
   const [newMemberRole, setNewMemberRole] = useState<'Project Manager' | 'Member'>('Member');
 
   useEffect(() => {
+    // Process any pending OAuth redirect from signInWithGoogle()
+    handleRedirectResult().catch(console.error);
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         const existing = await db.getById<User>('users', firebaseUser.uid);

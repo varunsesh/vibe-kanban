@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { Task } from '../db/db';
 
-type ActiveView = 'board' | 'settings';
+type ActiveView = 'board' | 'settings' | 'projectSettings';
 
 interface AppState {
   activeView: ActiveView;

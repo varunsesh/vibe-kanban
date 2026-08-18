@@ -53,13 +53,11 @@ export class SyncService {
       await db.put('projects', updatedProject);
     }
 
-    // Pull and update Members
+    // Pull and update Members (always apply — empty list means all members removed)
     const remoteMembers = await googleSheetsService.pullMembers(project.spreadsheetId);
-    if (remoteMembers.length > 0) {
-      const currentProject = await db.getById<Project>('projects', projectId);
-      if (currentProject) {
-        await db.put('projects', { ...currentProject, members: remoteMembers });
-      }
+    const currentProject = await db.getById<Project>('projects', projectId);
+    if (currentProject) {
+      await db.put('projects', { ...currentProject, members: remoteMembers });
     }
 
     const remoteTasks = await googleSheetsService.pullTasks(project.spreadsheetId);
