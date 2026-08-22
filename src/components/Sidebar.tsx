@@ -4,7 +4,7 @@ import {
   Divider, IconButton, Box, Typography, Button, Dialog, DialogTitle,
   DialogContent, DialogActions, TextField, Tooltip
 } from '@mui/material';
-import { Layout, Plus, LogOut, ChevronLeft, ChevronRight, Trash2, FileSpreadsheet, RefreshCw, Settings } from 'lucide-react';
+import { Layout, Plus, LogOut, ChevronLeft, ChevronRight, Trash2, FileSpreadsheet, RefreshCw, Settings, GanttChart } from 'lucide-react';
 import { keyframes } from '@emotion/react';
 import { useProjectStore } from '../store/projectStore';
 import { useAppStore } from '../store/appStore';
@@ -125,6 +125,18 @@ const Sidebar: React.FC = () => {
               <Plus size={20} />
             </ListItemIcon>
             {sidebarOpen && <ListItemText primary="New Project" />}
+          </ListItemButton>
+        </ListItem>
+        <ListItem disablePadding sx={{ display: 'block' }}>
+          <ListItemButton
+            onClick={() => setActiveView('gantt')}
+            selected={activeView === 'gantt'}
+            sx={{ minHeight: 48, justifyContent: sidebarOpen ? 'initial' : 'center', px: 2.5 }}
+          >
+            <ListItemIcon sx={{ minWidth: 0, mr: sidebarOpen ? 3 : 'auto', justifyContent: 'center' }}>
+              <GanttChart size={20} />
+            </ListItemIcon>
+            {sidebarOpen && <ListItemText primary="Gantt Chart" />}
           </ListItemButton>
         </ListItem>
         {currentUser?.globalRole === 'Admin' && (

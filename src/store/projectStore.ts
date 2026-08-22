@@ -205,6 +205,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     await db.put('releases', newRelease);
     await get().loadReleases(activeProjectId);
+    syncService.debouncedPush(activeProjectId);
   },
   updateRelease: async (release: Release) => {
     const { activeProjectId } = get();
@@ -212,12 +213,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     await db.put('releases', release);
     await get().loadReleases(activeProjectId);
+    syncService.debouncedPush(activeProjectId);
   },
   deleteRelease: async (releaseId: string) => {
     const { activeProjectId, activeReleaseId } = get();
     if (!activeProjectId) return;
 
-    // Optional: Unassign tasks from this release instead of deleting them
+    // Unassign tasks from this release instead of deleting them
     const tasks = await db.getTasksByProject(activeProjectId);
     for (const task of tasks) {
       if (task.releaseId === releaseId) {
@@ -231,6 +233,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
     await get().loadReleases(activeProjectId);
     await get().loadTasks(activeProjectId);
+    syncService.debouncedPush(activeProjectId);
   },
   reorderReleases: async (startIndex: number, endIndex: number) => {
     const { releases, activeProjectId } = get();
@@ -240,7 +243,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const [removed] = result.splice(startIndex, 1);
     result.splice(endIndex, 0, removed);
 
-    // Update orders
     const updatedReleases = result.map((release, index) => ({
       ...release,
       order: index,
@@ -248,10 +250,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     set({ releases: updatedReleases });
 
-    // Persist to DB
     for (const release of updatedReleases) {
       await db.put('releases', release);
     }
+    syncService.debouncedPush(activeProjectId);
   },
   connectSheets: async (projectId: string, spreadsheetInput?: string) => {
     const appStore = useAppStore.getState();
@@ -340,7 +342,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     await db.put('tasks', taskToSave);
     if (!activeProjectId) return;
     await get().loadTasks(activeProjectId);
-    await syncService.pushProject(activeProjectId);
+    syncService.debouncedPush(activeProjectId);
   },
   deleteTask: async (taskId: string) => {
     const { activeProjectId, tasks, projects } = get();
@@ -364,7 +366,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     await db.delete('tasks', taskId);
     await get().loadTasks(activeProjectId);
-    await syncService.pushProject(activeProjectId);
+    syncService.debouncedPush(activeProjectId);
   },
   moveTask: async (result: DropResult) => {
     const { destination, source, draggableId } = result;
@@ -385,7 +387,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     await db.put('tasks', updatedTask);
 
     if (activeProjectId) {
-      await syncService.pushProject(activeProjectId);
+      syncService.debouncedPush(activeProjectId);
     }
   },
   addComment: async (taskId: string, text: string) => {
@@ -411,7 +413,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     await db.put('tasks', updatedTask);
     await get().loadTasks(activeProjectId);
-    await syncService.pushProject(activeProjectId);
+    syncService.debouncedPush(activeProjectId);
   },
   addMember: async (projectId: string, userId: string, role: 'Project Manager' | 'Member') => {
     const project = await db.getById<Project>('projects', projectId);
@@ -428,7 +430,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     await db.put('projects', { ...project, members });
     await get().loadProjects();
-    await syncService.pushProject(projectId);
+    syncService.debouncedPush(projectId);
   },
   removeMember: async (projectId: string, userId: string) => {
     const project = await db.getById<Project>('projects', projectId);
@@ -437,7 +439,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const members = (project.members || []).filter(m => m.userId !== userId);
     await db.put('projects', { ...project, members });
     await get().loadProjects();
-    await syncService.pushProject(projectId);
+    syncService.debouncedPush(projectId);
   },
 }));
 

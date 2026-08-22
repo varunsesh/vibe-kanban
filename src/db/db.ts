@@ -54,7 +54,10 @@ export interface Task {
   description: string;
   status: string; // Changed from enum to string to support dynamic columns
   priority: 'low' | 'medium' | 'high';
-  dueDate?: number;
+  startDate?: number;      // ms timestamp — when work begins
+  duration?: number;       // working days
+  dueDate?: number;        // derived: startDate + duration * 86400000; also writable as standalone deadline
+  dependencies?: string[]; // task IDs that must finish before this task can start
   assigneeId?: string;
   createdBy: string;
   createdAt: number;

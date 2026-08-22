@@ -1,10 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
-  Button, TextField, MenuItem, Box, Typography, Avatar, Tooltip, List, ListItem, ListItemAvatar, ListItemText, IconButton
+  Button, TextField, MenuItem, Box, Typography, Avatar, Tooltip, List, ListItem, ListItemAvatar, ListItemText, IconButton,
+  Chip, OutlinedInput, Select, InputLabel, FormControl,
 } from '@mui/material';
 import { User as UserIcon, Send, MessageSquare } from 'lucide-react';
 import { Task } from '../db/db';
+
+const DAY_MS = 86_400_000;
+
+const toDateInput = (ts?: number) =>
+  ts ? new Date(ts).toISOString().split('T')[0] : '';
+
+const fromDateInput = (s: string) =>
+  s ? new Date(s).getTime() : undefined;
 import { useAppStore, buildEmptyTaskDraft } from '../store/appStore';
 import { useProjectStore, useCanDeleteTask, useProjectRole } from '../store/projectStore';
 import { useUserStore } from '../store/userStore';
@@ -39,6 +48,18 @@ const TaskModal: React.FC = () => {
   const canComment = !!userRole;
 
   const [commentText, setCommentText] = useState('');
+
+  // Other tasks in this project (for dependency picker)
+  const otherTasks = useMemo(
+    () => tasks.filter(t => t.projectId === activeProjectId && t.id !== taskDraft.id),
+    [tasks, activeProjectId, taskDraft.id]
+  );
+
+  // Inferred end date
+  const inferredEndDate = useMemo(() => {
+    if (!taskDraft.startDate || !taskDraft.duration) return null;
+    return new Date(taskDraft.startDate + taskDraft.duration * DAY_MS);
+  }, [taskDraft.startDate, taskDraft.duration]);
 
   useEffect(() => {
     if (!isTaskModalOpen) return;
@@ -262,6 +283,78 @@ const TaskModal: React.FC = () => {
                 </MenuItem>
               ))}
             </TextField>
+
+            <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 1 }}>
+              SCHEDULE
+            </Typography>
+            <TextField
+              fullWidth
+              type="date"
+              label="Start Date"
+              size="small"
+              slotProps={{ inputLabel: { shrink: true } }}
+              value={toDateInput(taskDraft.startDate)}
+              onChange={(e) => {
+                const startDate = fromDateInput(e.target.value);
+                const dueDate = startDate && taskDraft.duration
+                  ? startDate + taskDraft.duration * DAY_MS
+                  : taskDraft.dueDate;
+                patchTaskDraft({ startDate, dueDate });
+              }}
+              sx={{ mb: 1.5 }}
+            />
+            <TextField
+              fullWidth
+              type="number"
+              label="Duration (days)"
+              size="small"
+              slotProps={{ htmlInput: { min: 1 } }}
+              value={taskDraft.duration ?? ''}
+              onChange={(e) => {
+                const duration = e.target.value ? Number(e.target.value) : undefined;
+                const dueDate = taskDraft.startDate && duration
+                  ? taskDraft.startDate + duration * DAY_MS
+                  : taskDraft.dueDate;
+                patchTaskDraft({ duration, dueDate });
+              }}
+              sx={{ mb: 1 }}
+            />
+            {inferredEndDate && (
+              <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 2 }}>
+                End: {inferredEndDate.toLocaleDateString()}
+              </Typography>
+            )}
+
+            {otherTasks.length > 0 && (
+              <>
+                <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 1 }}>
+                  DEPENDS ON
+                </Typography>
+                <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+                  <InputLabel>Predecessors</InputLabel>
+                  <Select
+                    multiple
+                    value={taskDraft.dependencies ?? []}
+                    onChange={(e) => patchTaskDraft({ dependencies: e.target.value as string[] })}
+                    input={<OutlinedInput label="Predecessors" />}
+                    renderValue={(selected) => (
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                        {(selected as string[]).map(id => {
+                          const t = otherTasks.find(x => x.id === id);
+                          return <Chip key={id} label={t?.title ?? id} size="small" />;
+                        })}
+                      </Box>
+                    )}
+                  >
+                    {otherTasks.map(t => (
+                      <MenuItem key={t.id} value={t.id}>
+                        <Typography variant="body2" noWrap>{t.title}</Typography>
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </>
+            )}
           </Box>
         </Box>
       </DialogContent>

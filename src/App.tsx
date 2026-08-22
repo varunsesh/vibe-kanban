@@ -8,6 +8,7 @@ import Column from './components/Column';
 import TaskModal from './components/TaskModal';
 import ReleaseTabs from './components/ReleaseTabs';
 import TaskListView from './components/TaskListView';
+import GanttView from './components/GanttView';
 import { db, User } from './db/db';
 import { useUserStore } from './store/userStore';
 import { useProjectStore, useCanEditProject } from './store/projectStore';
@@ -456,6 +457,20 @@ const App: React.FC = () => {
                   </Paper>
                 </Box>
               )}
+            </Box>
+          ) : activeView === 'gantt' && activeProject ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+              <Box sx={{ mb: 2, flexShrink: 0 }}>
+                <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
+                  {activeProject.name} — Gantt Chart
+                </Typography>
+                <Typography variant="body2" sx={{ opacity: 0.9 }}>
+                  Critical path highlighted in red · Click any bar to edit the task
+                </Typography>
+              </Box>
+              <Box sx={{ flexGrow: 1, overflow: 'hidden', borderRadius: 1 }}>
+                <GanttView />
+              </Box>
             </Box>
           ) : activeProject ? (
             <>

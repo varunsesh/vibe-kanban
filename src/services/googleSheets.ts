@@ -1,7 +1,7 @@
-import { Project, Task, Comment } from '../db/db';
+import { Project, Task, Comment, Release } from '../db/db';
 
 const GOOGLE_API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets';
-const REQUIRED_SHEETS = ['Tasks', 'Config', 'Members', 'Comments', 'lastUpdated'];
+const REQUIRED_SHEETS = ['Tasks', 'Config', 'Members', 'Comments', 'Releases', 'lastUpdated'];
 
 export class GoogleSheetsService {
   private readonly tokenKey = 'googleAccessToken';
@@ -54,8 +54,14 @@ export class GoogleSheetsService {
 
     const response = await fetch(url, { ...options, headers });
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error?.message || 'Google API Error');
+      let errorData: Record<string, unknown> = {};
+      try { errorData = await response.json() as Record<string, unknown>; } catch { /* ignore */ }
+      const apiError = errorData.error as { message?: string; status?: string } | undefined;
+      const message = apiError?.message ?? `HTTP ${response.status}`;
+      // Strip the token from the URL before logging
+      const safeUrl = url.replace(/key=[^&]+/, 'key=…');
+      console.error(`[Sheets API] ${response.status} ${options.method ?? 'GET'} ${safeUrl}`, apiError?.status, message);
+      throw new Error(message);
     }
     return response.json();
   }
@@ -76,14 +82,15 @@ export class GoogleSheetsService {
   async setupHeaders(spreadsheetId: string) {
     await this.ensureRequiredSheets(spreadsheetId);
     await this.batchUpdateValues(spreadsheetId, [
-      { range: 'Tasks!A1:J1',    values: [['ID', 'ProjectID', 'Title', 'Description', 'Status', 'Priority', 'DueDate', 'AssigneeId', 'CreatedBy', 'CreatedAt']] },
+      { range: 'Tasks!A1:M1',    values: [['ID', 'ProjectID', 'Title', 'Description', 'Status', 'Priority', 'DueDate', 'AssigneeId', 'CreatedBy', 'CreatedAt', 'StartDate', 'Duration', 'Dependencies']] },
       { range: 'Config!A1:F1',   values: [['ID', 'Name', 'Description', 'ColumnsJSON', 'OwnerID', 'CreatedAt']] },
       { range: 'Members!A1:C1',  values: [['ProjectID', 'UserID', 'Role']] },
       { range: 'Comments!A1:F1', values: [['ID', 'TaskID', 'UserID', 'UserName', 'Text', 'CreatedAt']] },
+      { range: 'Releases!A1:G1', values: [['ID', 'ProjectID', 'Name', 'Description', 'Status', 'Order', 'CreatedAt']] },
     ]);
   }
 
-  private async ensureRequiredSheets(spreadsheetId: string) {
+  async ensureRequiredSheets(spreadsheetId: string) {
     const url = `${GOOGLE_API_BASE}/${spreadsheetId}?fields=sheets(properties(title))`;
     const data = await this.fetchGoogleApi(url);
     const existing = new Set<string>(
@@ -128,15 +135,16 @@ export class GoogleSheetsService {
     });
   }
 
-  async syncProject(project: Project, tasks: Task[], users: any[]) {
+  async syncProject(project: Project, tasks: Task[], users: any[], releases: Release[] = []) {
     if (!project.spreadsheetId) return;
     const id = project.spreadsheetId;
 
     // Clear all data rows in one request so deleted records don't persist
     await this.batchClearRanges(id, [
-      'Tasks!A2:J100000',
+      'Tasks!A2:M100000',
       'Members!A2:C10000',
       'Comments!A2:F100000',
+      'Releases!A2:G10000',
     ]);
 
     const memberData = (project.members || []).map(m => [project.id, m.userId, m.role]);
@@ -149,6 +157,8 @@ export class GoogleSheetsService {
       task.id, task.projectId, task.title, task.description,
       task.status, task.priority, task.dueDate || '',
       task.assigneeId || '', task.createdBy, task.createdAt,
+      task.startDate || '', task.duration || '',
+      (task.dependencies ?? []).join(','),
     ]);
 
     // Write all data in one batch request
@@ -158,15 +168,20 @@ export class GoogleSheetsService {
           JSON.stringify(project.columns), project.ownerId, project.createdAt,
         ]] },
     ];
+    const releaseData = releases.map(r => [
+      r.id, r.projectId, r.name, r.description ?? '', r.status, r.order, r.createdAt,
+    ]);
+
     if (memberData.length > 0)  updates.push({ range: `Members!A2:C${memberData.length + 1}`,   values: memberData });
     if (commentData.length > 0) updates.push({ range: `Comments!A2:F${commentData.length + 1}`, values: commentData });
-    if (taskData.length > 0)    updates.push({ range: `Tasks!A2:J${taskData.length + 1}`,       values: taskData });
+    if (taskData.length > 0)    updates.push({ range: `Tasks!A2:M${taskData.length + 1}`,       values: taskData });
+    if (releaseData.length > 0) updates.push({ range: `Releases!A2:G${releaseData.length + 1}`, values: releaseData });
 
     await this.batchUpdateValues(id, updates);
   }
 
   async pullTasks(spreadsheetId: string): Promise<Partial<Task>[]> {
-    const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values/Tasks!A2:J1000`;
+    const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values/Tasks!A2:M10000`;
     const data = await this.fetchGoogleApi(url);
     const rows = data.values || [];
 
@@ -178,9 +193,12 @@ export class GoogleSheetsService {
       status: row[4],
       priority: row[5] as any,
       dueDate: row[6] ? Number(row[6]) : undefined,
-      assigneeId: row[7],
+      assigneeId: row[7] || undefined,
       createdBy: row[8],
       createdAt: Number(row[9]),
+      startDate: row[10] ? Number(row[10]) : undefined,
+      duration: row[11] ? Number(row[11]) : undefined,
+      dependencies: row[12] ? String(row[12]).split(',').filter(Boolean) : [],
     }));
   }
 
@@ -206,6 +224,75 @@ export class GoogleSheetsService {
       text: row[4],
       createdAt: Number(row[5]),
     }));
+  }
+
+  // Fetches config, members, tasks, and comments in a single batchGet request
+  // instead of 4 separate calls — avoids rate limiting on project load.
+  async pullAllSheetData(spreadsheetId: string): Promise<{
+    config: Partial<Project> | null;
+    members: { userId: string; role: string }[];
+    tasks: Partial<Task>[];
+    comments: Comment[];
+    releases: Release[];
+  }> {
+    const ranges = ['Config!A2:F2', 'Members!A2:C10000', 'Tasks!A2:M10000', 'Comments!A2:F100000', 'Releases!A2:G10000'];
+    const query = ranges.map(r => `ranges=${encodeURIComponent(r)}`).join('&');
+    const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values:batchGet?${query}`;
+
+    const data = await this.fetchGoogleApi(url).catch(() => ({ valueRanges: [] }));
+    const [configRange, membersRange, tasksRange, commentsRange, releasesRange] = (data.valueRanges ?? []) as { values?: any[][] }[];
+
+    const configRow = configRange?.values?.[0];
+    const config: Partial<Project> | null = configRow ? {
+      id: configRow[0],
+      name: configRow[1],
+      description: configRow[2] ?? '',
+      columns: (() => { try { return JSON.parse(configRow[3]); } catch { return []; } })(),
+      ownerId: configRow[4],
+      createdAt: Number(configRow[5]),
+    } : null;
+
+    const members = (membersRange?.values ?? [])
+      .filter((row: any[]) => row[1])
+      .map((row: any[]) => ({ userId: row[1] as string, role: row[2] as string }));
+
+    const tasks: Partial<Task>[] = (tasksRange?.values ?? []).map((row: any[]) => ({
+      id: row[0],
+      projectId: row[1],
+      title: row[2],
+      description: row[3],
+      status: row[4],
+      priority: row[5] as Task['priority'],
+      dueDate: row[6] ? Number(row[6]) : undefined,
+      assigneeId: row[7] || undefined,
+      createdBy: row[8],
+      createdAt: Number(row[9]),
+      startDate: row[10] ? Number(row[10]) : undefined,
+      duration: row[11] ? Number(row[11]) : undefined,
+      dependencies: row[12] ? String(row[12]).split(',').filter(Boolean) : [],
+    }));
+
+    const comments: Comment[] = (commentsRange?.values ?? []).map((row: any[]) => ({
+      id: row[0],
+      taskId: row[1],
+      userId: row[2],
+      text: row[4],
+      createdAt: Number(row[5]),
+    }));
+
+    const releases: Release[] = (releasesRange?.values ?? [])
+      .filter((row: any[]) => row[0])
+      .map((row: any[]) => ({
+        id: row[0],
+        projectId: row[1],
+        name: row[2],
+        description: row[3] || undefined,
+        status: row[4] as Release['status'],
+        order: Number(row[5]),
+        createdAt: Number(row[6]),
+      }));
+
+    return { config, members, tasks, comments, releases };
   }
 
   async getLastUpdated(spreadsheetId: string): Promise<number> {

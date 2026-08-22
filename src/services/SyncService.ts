@@ -1,7 +1,19 @@
-import { db, Project, Task, User, Comment } from '../db/db';
+import { db, Project, Task, User, Comment, Release } from '../db/db';
 import { googleSheetsService } from './googleSheets';
 
 export class SyncService {
+  private readonly pushTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  debouncedPush(projectId: string, delayMs = 3000) {
+    const existing = this.pushTimers.get(projectId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.pushTimers.delete(projectId);
+      this.pushProject(projectId).catch(console.error);
+    }, delayMs);
+    this.pushTimers.set(projectId, timer);
+  }
+
   async connectProjectToSheets(projectId: string, spreadsheetInput?: string): Promise<string> {
     const project = await db.getById<Project>('projects', projectId);
     if (!project) throw new Error('Project not found');
@@ -19,10 +31,10 @@ export class SyncService {
       project.spreadsheetId ||
       await googleSheetsService.createSpreadsheet(project.name);
 
+    // setupHeaders calls ensureRequiredSheets internally, creating lastUpdated if missing
     await googleSheetsService.setupHeaders(spreadsheetId);
 
-    // If the linked sheet changed, reset lastSyncedAt to 0 so pushProject
-    // knows to pull from the new sheet before writing anything.
+    // If the linked sheet changed, reset lastSyncedAt so pushProject pulls first
     const lastSyncedAt = spreadsheetId === project.spreadsheetId ? (project.lastSyncedAt ?? 0) : 0;
     await db.put('projects', { ...project, spreadsheetId, lastSyncedAt });
 
@@ -34,26 +46,31 @@ export class SyncService {
     const project = await db.getById<Project>('projects', projectId);
     if (!project?.spreadsheetId) return;
 
+    // Always ensure required sheets exist before reading/writing timestamps.
+    // This handles migration from spreadsheets created before lastUpdated was introduced.
+    // It's a single GET that's a no-op when all sheets already exist.
+    await googleSheetsService.ensureRequiredSheets(project.spreadsheetId);
+
     const sheetLastUpdated = await googleSheetsService.getLastUpdated(project.spreadsheetId);
     const localLastSynced = project.lastSyncedAt ?? 0;
 
     if (localLastSynced < sheetLastUpdated) {
-      // The sheet has changes we haven't seen — pull first to avoid overwriting them.
+      // Sheet has changes since our last push — pull first to avoid overwriting them
       await this.pullProject(projectId);
     }
 
-    // Re-fetch after potential pull (project and tasks may have been updated).
-    const [updatedProject, tasks, users] = await Promise.all([
+    // Re-fetch after potential pull (project and tasks may have been updated)
+    const [updatedProject, tasks, users, releases] = await Promise.all([
       db.getById<Project>('projects', projectId),
       db.getTasksByProject(projectId),
       db.getAll<User>('users'),
+      db.getReleasesByProject(projectId),
     ]);
 
     if (!updatedProject?.spreadsheetId) return;
 
-    await googleSheetsService.syncProject(updatedProject, tasks, users);
+    await googleSheetsService.syncProject(updatedProject, tasks, users, releases);
 
-    // Record that the sheet is now up to date with our local state.
     const now = Date.now();
     await Promise.all([
       googleSheetsService.setLastUpdated(updatedProject.spreadsheetId, now),
@@ -65,21 +82,19 @@ export class SyncService {
     const project = await db.getById<Project>('projects', projectId);
     if (!project?.spreadsheetId) return;
 
-    const remoteConfig = await googleSheetsService.pullConfig(project.spreadsheetId);
+    // Single batchGet call instead of 4 sequential requests — avoids 429s on load
+    const { config: remoteConfig, members: remoteMembers, tasks: remoteTasks, comments: remoteComments, releases: remoteReleases } =
+      await googleSheetsService.pullAllSheetData(project.spreadsheetId);
+
     if (remoteConfig) {
-      await db.put('projects', { ...project, ...remoteConfig, spreadsheetId: project.spreadsheetId });
+      await db.put('projects', { ...project, ...remoteConfig, spreadsheetId: project.spreadsheetId, members: remoteMembers });
+    } else {
+      // Always apply remote members even when config row is absent
+      const currentProject = await db.getById<Project>('projects', projectId);
+      if (currentProject) {
+        await db.put('projects', { ...currentProject, members: remoteMembers });
+      }
     }
-
-    const remoteMembers = await googleSheetsService.pullMembers(project.spreadsheetId);
-    const currentProject = await db.getById<Project>('projects', projectId);
-    if (currentProject) {
-      await db.put('projects', { ...currentProject, members: remoteMembers });
-    }
-
-    const [remoteTasks, remoteComments] = await Promise.all([
-      googleSheetsService.pullTasks(project.spreadsheetId),
-      googleSheetsService.pullComments(project.spreadsheetId),
-    ]);
 
     for (const remoteTask of remoteTasks) {
       if (remoteTask.id) {
@@ -89,13 +104,20 @@ export class SyncService {
       }
     }
 
-    // Mark local as synced to the sheet's current timestamp so the next
-    // pushProject knows it doesn't need to pull again.
-    const sheetLastUpdated = await googleSheetsService.getLastUpdated(project.spreadsheetId);
-    const finalProject = await db.getById<Project>('projects', projectId);
-    if (finalProject) {
-      await db.put('projects', { ...finalProject, lastSyncedAt: sheetLastUpdated });
+    // Sync releases: delete releases not in remote, upsert all remote releases
+    const localReleases = await db.getReleasesByProject(projectId);
+    const remoteReleaseIds = new Set(remoteReleases.map(r => r.id));
+    for (const local of localReleases) {
+      if (!remoteReleaseIds.has(local.id)) {
+        await db.delete('releases', local.id);
+      }
     }
+    for (const remoteRelease of remoteReleases) {
+      await db.put('releases', remoteRelease as Release);
+    }
+    // Note: lastSyncedAt is intentionally NOT updated here. It tracks when we last
+    // pushed to the sheet, not when we last pulled. pushProject uses it to decide
+    // whether the sheet has changed since our last write.
   }
 }
 
