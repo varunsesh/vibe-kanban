@@ -3,6 +3,7 @@ import {
   Box, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Typography, Chip, Avatar, Tooltip, Button, IconButton, Menu, MenuItem,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField,
+  Select, FormControl, InputLabel,
 } from '@mui/material';
 import { Plus, ChevronRight, ChevronDown, GripVertical, GitMerge } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
@@ -26,6 +27,7 @@ const getPriorityColor = (priority: Task['priority']) => {
 const TaskListView: React.FC = () => {
   const tasks = useProjectStore((state) => state.tasks);
   const projects = useProjectStore((state) => state.projects);
+  const releases = useProjectStore((state) => state.releases);
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const reorderTasks = useProjectStore((state) => state.reorderTasks);
   const linkAsSubTask = useProjectStore((state) => state.linkAsSubTask);
@@ -33,6 +35,7 @@ const TaskListView: React.FC = () => {
   const users = useUserStore((state) => state.users);
 
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [releaseFilter, setReleaseFilter] = useState<string>('__all__');
 
   // Per-row "+" menu state
   const [menuState, setMenuState] = useState<{ anchor: HTMLElement; taskId: string } | null>(null);
@@ -55,7 +58,21 @@ const TaskListView: React.FC = () => {
     return map;
   }, [users]);
 
-  const tree = useMemo(() => buildTaskTree(tasks), [tasks]);
+  const releasesById = useMemo(() => {
+    const map = new Map<string, (typeof releases)[number]>();
+    for (const r of releases) map.set(r.id, r);
+    return map;
+  }, [releases]);
+
+  // Apply release filter before building tree so children of filtered-out parents
+  // don't appear as orphan roots.
+  const filteredTasks = useMemo(() => {
+    if (releaseFilter === '__all__') return tasks;
+    if (releaseFilter === '__none__') return tasks.filter(t => !t.releaseId);
+    return tasks.filter(t => t.releaseId === releaseFilter);
+  }, [tasks, releaseFilter]);
+
+  const tree = useMemo(() => buildTaskTree(filteredTasks), [filteredTasks]);
   const flatRows = useMemo(() => flattenTreeExpanded(tree, expandedIds), [tree, expandedIds]);
 
   // Tasks eligible to be linked as sub-task under a parent
@@ -117,6 +134,7 @@ const TaskListView: React.FC = () => {
   const renderRow = (node: TaskNode, dragIndex: number) => {
     const { task, children, depth } = node;
     const assignee = task.assigneeId ? usersById.get(task.assigneeId) : null;
+    const release = task.releaseId ? releasesById.get(task.releaseId) : null;
     const hasChildren = children.length > 0;
     const isCollapsed = !expandedIds.has(task.id);
 
@@ -188,6 +206,19 @@ const TaskListView: React.FC = () => {
               <Chip label={task.priority.toUpperCase()} size="small" color={getPriorityColor(task.priority)} />
             </TableCell>
 
+            {/* Release column */}
+            <TableCell onClick={() => openTaskModal(task.id)}>
+              {release ? (
+                <Chip
+                  label={release.name}
+                  size="small"
+                  sx={{ bgcolor: '#e8f5e9', color: '#2e7d32', fontSize: '0.7rem' }}
+                />
+              ) : (
+                <Typography variant="body2" color="text.disabled">—</Typography>
+              )}
+            </TableCell>
+
             <TableCell onClick={() => openTaskModal(task.id)}>
               {assignee ? (
                 <Tooltip title={assignee.displayName}>
@@ -223,7 +254,23 @@ const TaskListView: React.FC = () => {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 2 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+      {/* Toolbar: filter + add button */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        <FormControl size="small" sx={{ minWidth: 200 }}>
+          <InputLabel>Filter by Release</InputLabel>
+          <Select
+            label="Filter by Release"
+            value={releaseFilter}
+            onChange={(e) => setReleaseFilter(e.target.value)}
+          >
+            <MenuItem value="__all__">All Releases</MenuItem>
+            <MenuItem value="__none__">No Release</MenuItem>
+            {releases.map(r => (
+              <MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        <Box sx={{ flexGrow: 1 }} />
         <Button variant="contained" startIcon={<Plus size={18} />} onClick={() => openTaskModal(null)} sx={{ borderRadius: 2 }}>
           Add Task
         </Button>
@@ -239,6 +286,7 @@ const TaskListView: React.FC = () => {
                 <TableCell sx={{ fontWeight: 'bold' }}>Title</TableCell>
                 <TableCell sx={{ fontWeight: 'bold' }}>Status</TableCell>
                 <TableCell sx={{ fontWeight: 'bold' }}>Priority</TableCell>
+                <TableCell sx={{ fontWeight: 'bold' }}>Release</TableCell>
                 <TableCell sx={{ fontWeight: 'bold' }}>Assignee</TableCell>
                 <TableCell sx={{ fontWeight: 'bold' }}>Created At</TableCell>
                 <TableCell sx={{ width: 40 }} />
@@ -251,7 +299,7 @@ const TaskListView: React.FC = () => {
                   {provided.placeholder}
                   {tasks.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={8} align="center" sx={{ py: 8 }}>
+                      <TableCell colSpan={9} align="center" sx={{ py: 8 }}>
                         <Typography variant="h6" color="text.secondary">No tasks found in this project.</Typography>
                       </TableCell>
                     </TableRow>

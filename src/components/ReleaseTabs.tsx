@@ -1,12 +1,21 @@
 import React, { useState, MouseEvent } from 'react';
 import {
   Box, Typography, IconButton, Button, Dialog, DialogTitle,
-  DialogContent, DialogActions, TextField, Menu, MenuItem
+  DialogContent, DialogActions, TextField, Menu, MenuItem, Select,
+  FormControl, InputLabel, Stack,
 } from '@mui/material';
 import { Plus, X } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult, DraggableProvidedDraggableProps, DraggableProvidedDragHandleProps } from '@hello-pangea/dnd';
 import { useProjectStore, useCanEditProject } from '../store/projectStore';
 import { Release } from '../db/db';
+
+const STATUS_OPTIONS: Release['status'][] = ['Planned', 'In Progress', 'Released', 'Archived'];
+
+const toDateInput = (ts?: number): string =>
+  ts ? new Date(ts).toISOString().split('T')[0] : '';
+
+const fromDateInput = (s: string): number | undefined =>
+  s ? new Date(s).getTime() : undefined;
 
 const ReleaseTabs: React.FC = () => {
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
@@ -17,35 +26,55 @@ const ReleaseTabs: React.FC = () => {
   const updateRelease = useProjectStore((state) => state.updateRelease);
   const deleteRelease = useProjectStore((state) => state.deleteRelease);
   const reorderReleases = useProjectStore((state) => state.reorderReleases);
-  
+
   const canEdit = useCanEditProject(activeProjectId);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingRelease, setEditingRelease] = useState<Release | null>(null);
   const [releaseName, setReleaseName] = useState('');
+  const [releaseStatus, setReleaseStatus] = useState<Release['status']>('Planned');
+  const [scheduledDateStr, setScheduledDateStr] = useState('');
+  const [actualDateStr, setActualDateStr] = useState('');
 
-  // Context Menu State
   const [contextMenu, setContextMenu] = useState<{ mouseX: number; mouseY: number; release: Release } | null>(null);
+
+  const resetForm = () => {
+    setReleaseName('');
+    setReleaseStatus('Planned');
+    setScheduledDateStr('');
+    setActualDateStr('');
+  };
 
   const handleOpenAdd = () => {
     setEditingRelease(null);
-    setReleaseName('');
+    resetForm();
     setIsDialogOpen(true);
   };
 
   const handleOpenEdit = (release: Release) => {
     setEditingRelease(release);
     setReleaseName(release.name);
+    setReleaseStatus(release.status);
+    setScheduledDateStr(toDateInput(release.scheduledDate));
+    setActualDateStr(toDateInput(release.actualDate));
     setIsDialogOpen(true);
     setContextMenu(null);
   };
 
   const handleSave = async () => {
     if (!releaseName.trim()) return;
+    const scheduledDate = fromDateInput(scheduledDateStr);
+    const actualDate = fromDateInput(actualDateStr);
     if (editingRelease) {
-      await updateRelease({ ...editingRelease, name: releaseName.trim() });
+      await updateRelease({
+        ...editingRelease,
+        name: releaseName.trim(),
+        status: releaseStatus,
+        scheduledDate,
+        actualDate,
+      });
     } else {
-      await addRelease(releaseName.trim());
+      await addRelease(releaseName.trim(), undefined, scheduledDate, actualDate);
     }
     setIsDialogOpen(false);
   };
@@ -67,9 +96,7 @@ const ReleaseTabs: React.FC = () => {
     );
   };
 
-  const handleCloseContextMenu = () => {
-    setContextMenu(null);
-  };
+  const handleCloseContextMenu = () => setContextMenu(null);
 
   const onDragEnd = (result: DropResult) => {
     if (!result.destination) return;
@@ -77,15 +104,15 @@ const ReleaseTabs: React.FC = () => {
   };
 
   const renderTab = (
-    id: string | null, 
-    name: string, 
-    release?: Release, 
-    draggableProps?: DraggableProvidedDraggableProps, 
-    dragHandleProps?: DraggableProvidedDragHandleProps, 
+    id: string | null,
+    name: string,
+    release?: Release,
+    draggableProps?: DraggableProvidedDraggableProps,
+    dragHandleProps?: DraggableProvidedDragHandleProps,
     innerRef?: (element: HTMLElement | null) => void
   ) => {
     const isActive = activeReleaseId === id || (id === null && activeReleaseId === null);
-    
+
     return (
       <Box
         ref={innerRef}
@@ -134,7 +161,7 @@ const ReleaseTabs: React.FC = () => {
             size="small"
             onClick={(e) => {
               e.stopPropagation();
-              handleDelete(release.id);
+              void handleDelete(release.id);
             }}
             sx={{
               position: 'absolute',
@@ -169,7 +196,7 @@ const ReleaseTabs: React.FC = () => {
 
         <Box sx={{ display: 'flex', flexGrow: 1, overflowX: 'auto', pb: 0, '&::-webkit-scrollbar': { display: 'none' } }}>
           {renderTab(null, 'All Tasks')}
-          
+
           <DragDropContext onDragEnd={onDragEnd}>
             <Droppable droppableId="release-tabs" direction="horizontal">
               {(provided) => (
@@ -182,10 +209,10 @@ const ReleaseTabs: React.FC = () => {
                     <Draggable key={release.id} draggableId={release.id} index={index}>
                       {(dragProvided) => (
                         renderTab(
-                          release.id, 
-                          release.name, 
-                          release, 
-                          dragProvided.draggableProps, 
+                          release.id,
+                          release.name,
+                          release,
+                          dragProvided.draggableProps,
                           dragProvided.dragHandleProps ?? undefined,
                           dragProvided.innerRef
                         )
@@ -211,28 +238,64 @@ const ReleaseTabs: React.FC = () => {
             : undefined
         }
       >
-        <MenuItem onClick={() => contextMenu && handleOpenEdit(contextMenu.release)}>Rename</MenuItem>
-        <MenuItem onClick={() => contextMenu && handleDelete(contextMenu.release.id)} sx={{ color: 'error.main' }}>Delete</MenuItem>
+        <MenuItem onClick={() => contextMenu && handleOpenEdit(contextMenu.release)}>Edit</MenuItem>
+        <MenuItem onClick={() => contextMenu && void handleDelete(contextMenu.release.id)} sx={{ color: 'error.main' }}>Delete</MenuItem>
       </Menu>
 
-      {/* Dialog */}
-      <Dialog open={isDialogOpen} onClose={() => setIsDialogOpen(false)}>
-        <DialogTitle>{editingRelease ? 'Rename Release' : 'Create Release'}</DialogTitle>
+      {/* Create / Edit Dialog */}
+      <Dialog open={isDialogOpen} onClose={() => setIsDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>{editingRelease ? 'Edit Release' : 'Create Release'}</DialogTitle>
         <DialogContent>
-          <TextField
-            autoFocus
-            margin="dense"
-            label="Release Name"
-            fullWidth
-            variant="outlined"
-            value={releaseName}
-            onChange={(e) => setReleaseName(e.target.value)}
-          />
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              autoFocus
+              label="Release Name"
+              fullWidth
+              size="small"
+              value={releaseName}
+              onChange={(e) => setReleaseName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void handleSave()}
+            />
+            {editingRelease && (
+              <FormControl size="small" fullWidth>
+                <InputLabel>Status</InputLabel>
+                <Select
+                  label="Status"
+                  value={releaseStatus}
+                  onChange={(e) => setReleaseStatus(e.target.value as Release['status'])}
+                >
+                  {STATUS_OPTIONS.map(s => (
+                    <MenuItem key={s} value={s}>{s}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            )}
+            <TextField
+              label="Scheduled Date"
+              type="date"
+              size="small"
+              fullWidth
+              value={scheduledDateStr}
+              onChange={(e) => setScheduledDateStr(e.target.value)}
+              slotProps={{ inputLabel: { shrink: true } }}
+              helperText="Planned release date"
+            />
+            <TextField
+              label="Actual Date"
+              type="date"
+              size="small"
+              fullWidth
+              value={actualDateStr}
+              onChange={(e) => setActualDateStr(e.target.value)}
+              slotProps={{ inputLabel: { shrink: true } }}
+              helperText="Date it was actually shipped"
+            />
+          </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setIsDialogOpen(false)}>Cancel</Button>
           <Button onClick={() => void handleSave()} variant="contained" disabled={!releaseName.trim()}>
-            {editingRelease ? 'Rename' : 'Create'}
+            {editingRelease ? 'Save' : 'Create'}
           </Button>
         </DialogActions>
       </Dialog>

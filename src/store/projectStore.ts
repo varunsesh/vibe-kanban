@@ -18,7 +18,7 @@ interface ProjectState {
   selectRelease: (releaseId: string | null) => Promise<void>;
   addProject: (name: string) => Promise<void>;
   deleteProject: (projectId: string) => Promise<void>;
-  addRelease: (name: string, description?: string) => Promise<void>;
+  addRelease: (name: string, description?: string, scheduledDate?: number, actualDate?: number) => Promise<void>;
   updateRelease: (release: Release) => Promise<void>;
   deleteRelease: (releaseId: string) => Promise<void>;
   reorderReleases: (startIndex: number, endIndex: number) => Promise<void>;
@@ -189,7 +189,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }
     }
   },
-  addRelease: async (name: string, description?: string) => {
+  addRelease: async (name: string, description?: string, scheduledDate?: number, actualDate?: number) => {
     const { activeProjectId, releases } = get();
     if (!activeProjectId) return;
 
@@ -202,6 +202,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       description,
       status: 'Planned',
       order: maxOrder + 1,
+      scheduledDate,
+      actualDate,
       createdAt: Date.now(),
     };
 

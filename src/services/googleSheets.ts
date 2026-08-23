@@ -86,7 +86,7 @@ export class GoogleSheetsService {
       { range: 'Config!A1:F1',   values: [['ID', 'Name', 'Description', 'ColumnsJSON', 'OwnerID', 'CreatedAt']] },
       { range: 'Members!A1:C1',  values: [['ProjectID', 'UserID', 'Role']] },
       { range: 'Comments!A1:F1', values: [['ID', 'TaskID', 'UserID', 'UserName', 'Text', 'CreatedAt']] },
-      { range: 'Releases!A1:G1', values: [['ID', 'ProjectID', 'Name', 'Description', 'Status', 'Order', 'CreatedAt']] },
+      { range: 'Releases!A1:I1', values: [['ID', 'ProjectID', 'Name', 'Description', 'Status', 'Order', 'CreatedAt', 'ScheduledDate', 'ActualDate']] },
       { range: 'Users!A1:D1',    values: [['ID', 'DisplayName', 'Email', 'PhotoURL']] },
     ]);
   }
@@ -145,7 +145,7 @@ export class GoogleSheetsService {
       'Tasks!A2:O100000',
       'Members!A2:C10000',
       'Comments!A2:F100000',
-      'Releases!A2:G10000',
+      'Releases!A2:I10000',
       'Users!A2:D10000',
     ]);
 
@@ -175,12 +175,13 @@ export class GoogleSheetsService {
     ];
     const releaseData = releases.map(r => [
       r.id, r.projectId, r.name, r.description ?? '', r.status, r.order, r.createdAt,
+      r.scheduledDate ?? '', r.actualDate ?? '',
     ]);
 
     if (memberData.length > 0)  updates.push({ range: `Members!A2:C${memberData.length + 1}`,   values: memberData });
     if (commentData.length > 0) updates.push({ range: `Comments!A2:F${commentData.length + 1}`, values: commentData });
     if (taskData.length > 0)    updates.push({ range: `Tasks!A2:O${taskData.length + 1}`,       values: taskData });
-    if (releaseData.length > 0) updates.push({ range: `Releases!A2:G${releaseData.length + 1}`, values: releaseData });
+    if (releaseData.length > 0) updates.push({ range: `Releases!A2:I${releaseData.length + 1}`, values: releaseData });
     if (userData.length > 0)   updates.push({ range: `Users!A2:D${userData.length + 1}`,       values: userData });
 
     await this.batchUpdateValues(id, updates);
@@ -244,7 +245,7 @@ export class GoogleSheetsService {
     releases: Release[];
     users: Partial<User>[];
   }> {
-    const ranges = ['Config!A2:F2', 'Members!A2:C10000', 'Tasks!A2:O10000', 'Comments!A2:F100000', 'Releases!A2:G10000', 'Users!A2:D10000'];
+    const ranges = ['Config!A2:F2', 'Members!A2:C10000', 'Tasks!A2:O10000', 'Comments!A2:F100000', 'Releases!A2:I10000', 'Users!A2:D10000'];
     const query = ranges.map(r => `ranges=${encodeURIComponent(r)}`).join('&');
     const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values:batchGet?${query}`;
 
@@ -300,6 +301,8 @@ export class GoogleSheetsService {
         status: row[4] as Release['status'],
         order: Number(row[5]),
         createdAt: Number(row[6]),
+        scheduledDate: row[7] ? Number(row[7]) : undefined,
+        actualDate: row[8] ? Number(row[8]) : undefined,
       }));
 
     const users: Partial<User>[] = (usersRange?.values ?? [])

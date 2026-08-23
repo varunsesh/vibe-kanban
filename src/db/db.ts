@@ -43,6 +43,8 @@ export interface Release {
   description?: string;
   status: 'Planned' | 'In Progress' | 'Released' | 'Archived';
   order: number;
+  scheduledDate?: number; // planned release date (ms timestamp)
+  actualDate?: number;    // actual/shipped release date (ms timestamp)
   createdAt: number;
 }
 
