@@ -2,7 +2,7 @@ import React, { useState, MouseEvent } from 'react';
 import {
   Box, Typography, IconButton, Button, Dialog, DialogTitle,
   DialogContent, DialogActions, TextField, Menu, MenuItem, Select,
-  FormControl, InputLabel, Stack,
+  FormControl, InputLabel, Stack, FormControlLabel, Checkbox,
 } from '@mui/material';
 import { Plus, X } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult, DraggableProvidedDraggableProps, DraggableProvidedDragHandleProps } from '@hello-pangea/dnd';
@@ -35,6 +35,7 @@ const ReleaseTabs: React.FC = () => {
   const [releaseStatus, setReleaseStatus] = useState<Release['status']>('Planned');
   const [scheduledDateStr, setScheduledDateStr] = useState('');
   const [actualDateStr, setActualDateStr] = useState('');
+  const [notYetReleased, setNotYetReleased] = useState(true);
 
   const [contextMenu, setContextMenu] = useState<{ mouseX: number; mouseY: number; release: Release } | null>(null);
 
@@ -43,6 +44,7 @@ const ReleaseTabs: React.FC = () => {
     setReleaseStatus('Planned');
     setScheduledDateStr('');
     setActualDateStr('');
+    setNotYetReleased(true);
   };
 
   const handleOpenAdd = () => {
@@ -57,6 +59,7 @@ const ReleaseTabs: React.FC = () => {
     setReleaseStatus(release.status);
     setScheduledDateStr(toDateInput(release.scheduledDate));
     setActualDateStr(toDateInput(release.actualDate));
+    setNotYetReleased(!release.actualDate);
     setIsDialogOpen(true);
     setContextMenu(null);
   };
@@ -64,7 +67,7 @@ const ReleaseTabs: React.FC = () => {
   const handleSave = async () => {
     if (!releaseName.trim()) return;
     const scheduledDate = fromDateInput(scheduledDateStr);
-    const actualDate = fromDateInput(actualDateStr);
+    const actualDate = notYetReleased ? undefined : fromDateInput(actualDateStr);
     if (editingRelease) {
       await updateRelease({
         ...editingRelease,
@@ -280,16 +283,33 @@ const ReleaseTabs: React.FC = () => {
               slotProps={{ inputLabel: { shrink: true } }}
               helperText="Planned release date"
             />
-            <TextField
-              label="Actual Date"
-              type="date"
-              size="small"
-              fullWidth
-              value={actualDateStr}
-              onChange={(e) => setActualDateStr(e.target.value)}
-              slotProps={{ inputLabel: { shrink: true } }}
-              helperText="Date it was actually shipped"
-            />
+            <Box>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={notYetReleased}
+                    onChange={(e) => {
+                      setNotYetReleased(e.target.checked);
+                      if (e.target.checked) setActualDateStr('');
+                    }}
+                  />
+                }
+                label={<Typography variant="body2">Not yet released</Typography>}
+              />
+              {!notYetReleased && (
+                <TextField
+                  label="Actual Date"
+                  type="date"
+                  size="small"
+                  fullWidth
+                  value={actualDateStr}
+                  onChange={(e) => setActualDateStr(e.target.value)}
+                  slotProps={{ inputLabel: { shrink: true } }}
+                  helperText="Date it was actually shipped"
+                />
+              )}
+            </Box>
           </Stack>
         </DialogContent>
         <DialogActions>
