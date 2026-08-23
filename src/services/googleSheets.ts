@@ -42,7 +42,12 @@ export class GoogleSheetsService {
     return null;
   }
 
-  private async fetchGoogleApi(url: string, options: RequestInit = {}) {
+  // Spreadsheet IDs whose sheets have been verified to exist this session.
+  // Lets ensureRequiredSheets skip the GET after the first successful check.
+  private readonly sheetsVerifiedThisSession = new Set<string>();
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async fetchGoogleApi(url: string, options: RequestInit = {}): Promise<any> {
     const token = this.getAccessToken();
     if (!token) throw new Error('No Google Access Token found');
 
@@ -52,18 +57,31 @@ export class GoogleSheetsService {
       ...options.headers,
     };
 
-    const response = await fetch(url, { ...options, headers });
-    if (!response.ok) {
-      let errorData: Record<string, unknown> = {};
-      try { errorData = await response.json() as Record<string, unknown>; } catch { /* ignore */ }
-      const apiError = errorData.error as { message?: string; status?: string } | undefined;
-      const message = apiError?.message ?? `HTTP ${response.status}`;
-      // Strip the token from the URL before logging
-      const safeUrl = url.replace(/key=[^&]+/, 'key=…');
-      console.error(`[Sheets API] ${response.status} ${options.method ?? 'GET'} ${safeUrl}`, apiError?.status, message);
-      throw new Error(message);
+    // Retry up to 3 times on 429 with exponential back-off (1 s, 2 s, 4 s).
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const response = await fetch(url, { ...options, headers });
+
+      if (response.status === 429 && attempt < 3) {
+        const delay = 1000 * Math.pow(2, attempt);
+        console.warn(`[Sheets API] 429 rate-limited — retrying in ${delay}ms (attempt ${attempt + 1})`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+
+      if (!response.ok) {
+        let errorData: Record<string, unknown> = {};
+        try { errorData = await response.json() as Record<string, unknown>; } catch { /* ignore */ }
+        const apiError = errorData.error as { message?: string; status?: string } | undefined;
+        const message = apiError?.message ?? `HTTP ${response.status}`;
+        const safeUrl = url.replace(/key=[^&]+/, 'key=…');
+        console.error(`[Sheets API] ${response.status} ${options.method ?? 'GET'} ${safeUrl}`, apiError?.status, message);
+        throw new Error(message);
+      }
+
+      return response.json();
     }
-    return response.json();
+
+    throw new Error('Exceeded retry limit after repeated 429 responses');
   }
 
   async createSpreadsheet(projectName: string): Promise<string> {
@@ -92,24 +110,27 @@ export class GoogleSheetsService {
   }
 
   async ensureRequiredSheets(spreadsheetId: string) {
+    // Skip the network round-trip if already verified this session.
+    if (this.sheetsVerifiedThisSession.has(spreadsheetId)) return;
+
     const url = `${GOOGLE_API_BASE}/${spreadsheetId}?fields=sheets(properties(title))`;
     const data = await this.fetchGoogleApi(url);
     const existing = new Set<string>(
-      (data.sheets || []).map((sheet: any) => sheet.properties?.title).filter(Boolean)
+      (data.sheets || []).map((sheet: any) => sheet.properties?.title).filter(Boolean) as string[]
     );
-    const missing = REQUIRED_SHEETS.filter((sheet) => !existing.has(sheet));
+    const missing = REQUIRED_SHEETS.filter(sheet => !existing.has(sheet));
 
-    if (missing.length === 0) return;
+    if (missing.length > 0) {
+      const batchUrl = `${GOOGLE_API_BASE}/${spreadsheetId}:batchUpdate`;
+      await this.fetchGoogleApi(batchUrl, {
+        method: 'POST',
+        body: JSON.stringify({
+          requests: missing.map(title => ({ addSheet: { properties: { title } } })),
+        }),
+      });
+    }
 
-    const batchUrl = `${GOOGLE_API_BASE}/${spreadsheetId}:batchUpdate`;
-    await this.fetchGoogleApi(batchUrl, {
-      method: 'POST',
-      body: JSON.stringify({
-        requests: missing.map((title) => ({
-          addSheet: { properties: { title } },
-        })),
-      }),
-    });
+    this.sheetsVerifiedThisSession.add(spreadsheetId);
   }
 
   async updateValues(spreadsheetId: string, range: string, values: any[][]) {
@@ -136,7 +157,7 @@ export class GoogleSheetsService {
     });
   }
 
-  async syncProject(project: Project, tasks: Task[], users: User[], releases: Release[] = []) {
+  async syncProject(project: Project, tasks: Task[], users: User[], releases: Release[] = [], lastUpdatedTs?: number) {
     if (!project.spreadsheetId) return;
     const id = project.spreadsheetId;
 
@@ -182,7 +203,9 @@ export class GoogleSheetsService {
     if (commentData.length > 0) updates.push({ range: `Comments!A2:F${commentData.length + 1}`, values: commentData });
     if (taskData.length > 0)    updates.push({ range: `Tasks!A2:O${taskData.length + 1}`,       values: taskData });
     if (releaseData.length > 0) updates.push({ range: `Releases!A2:I${releaseData.length + 1}`, values: releaseData });
-    if (userData.length > 0)   updates.push({ range: `Users!A2:D${userData.length + 1}`,       values: userData });
+    if (userData.length > 0)    updates.push({ range: `Users!A2:D${userData.length + 1}`,       values: userData });
+    // Write lastUpdated in the same batch instead of a separate PUT call.
+    if (lastUpdatedTs !== undefined) updates.push({ range: 'lastUpdated!A1', values: [[lastUpdatedTs]] });
 
     await this.batchUpdateValues(id, updates);
   }
@@ -244,13 +267,14 @@ export class GoogleSheetsService {
     comments: Comment[];
     releases: Release[];
     users: Partial<User>[];
+    lastUpdatedTs: number;
   }> {
-    const ranges = ['Config!A2:F2', 'Members!A2:C10000', 'Tasks!A2:O10000', 'Comments!A2:F100000', 'Releases!A2:I10000', 'Users!A2:D10000'];
+    const ranges = ['Config!A2:F2', 'Members!A2:C10000', 'Tasks!A2:O10000', 'Comments!A2:F100000', 'Releases!A2:I10000', 'Users!A2:D10000', 'lastUpdated!A1'];
     const query = ranges.map(r => `ranges=${encodeURIComponent(r)}`).join('&');
     const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values:batchGet?${query}`;
 
     const data = await this.fetchGoogleApi(url).catch(() => ({ valueRanges: [] }));
-    const [configRange, membersRange, tasksRange, commentsRange, releasesRange, usersRange] = (data.valueRanges ?? []) as { values?: any[][] }[];
+    const [configRange, membersRange, tasksRange, commentsRange, releasesRange, usersRange, lastUpdatedRange] = (data.valueRanges ?? []) as { values?: any[][] }[];
 
     const configRow = configRange?.values?.[0];
     const config: Partial<Project> | null = configRow ? {
@@ -314,7 +338,9 @@ export class GoogleSheetsService {
         photoURL: row[3] || '',
       }));
 
-    return { config, members, tasks, comments, releases, users };
+    const lastUpdatedTs = lastUpdatedRange?.values?.[0]?.[0] ? Number(lastUpdatedRange.values[0][0]) : 0;
+
+    return { config, members, tasks, comments, releases, users, lastUpdatedTs };
   }
 
   async getLastUpdated(spreadsheetId: string): Promise<number> {
