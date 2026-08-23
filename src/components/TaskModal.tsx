@@ -16,6 +16,7 @@ const fromDateInput = (s: string) =>
   s ? new Date(s).getTime() : undefined;
 import { useAppStore, buildEmptyTaskDraft } from '../store/appStore';
 import { useProjectStore, useCanDeleteTask, useProjectRole } from '../store/projectStore';
+import { getDescendantIds } from '../utils/taskTree';
 import { useUserStore } from '../store/userStore';
 
 const TaskModal: React.FC = () => {
@@ -33,10 +34,12 @@ const TaskModal: React.FC = () => {
   const isTaskModalOpen = useAppStore((state) => state.isTaskModalOpen);
   const selectedTaskId = useAppStore((state) => state.selectedTaskId);
   const initialTaskStatus = useAppStore((state) => state.initialTaskStatus);
+  const initialParentTaskId = useAppStore((state) => state.initialParentTaskId);
   const taskDraft = useAppStore((state) => state.taskDraft);
   const closeTaskModal = useAppStore((state) => state.closeTaskModal);
   const setTaskDraft = useAppStore((state) => state.setTaskDraft);
   const patchTaskDraft = useAppStore((state) => state.patchTaskDraft);
+  const openTaskModal = useAppStore((state) => state.openTaskModal);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) || null;
@@ -49,7 +52,24 @@ const TaskModal: React.FC = () => {
 
   const [commentText, setCommentText] = useState('');
 
-  // Other tasks in this project (for dependency picker)
+  // Sub-tasks of the current task
+  const subTasks = useMemo(
+    () => tasks.filter(t => t.parentTaskId === taskDraft.id),
+    [tasks, taskDraft.id]
+  );
+
+  // Tasks eligible as parent: exclude self, descendants, and tasks already parented to this task's subtree
+  const eligibleParents = useMemo(() => {
+    if (!taskDraft.id) return tasks.filter(t => t.projectId === activeProjectId);
+    const descendants = getDescendantIds(taskDraft.id, tasks);
+    return tasks.filter(t =>
+      t.projectId === activeProjectId &&
+      t.id !== taskDraft.id &&
+      !descendants.has(t.id)
+    );
+  }, [tasks, activeProjectId, taskDraft.id]);
+
+  // Other tasks in this project (for dependency picker — also exclude self and descendants)
   const otherTasks = useMemo(
     () => tasks.filter(t => t.projectId === activeProjectId && t.id !== taskDraft.id),
     [tasks, activeProjectId, taskDraft.id]
@@ -70,8 +90,8 @@ const TaskModal: React.FC = () => {
     if (!activeProjectId) return;
     const fallbackStatus = initialTaskStatus || (columns.length > 0 ? columns[0].id : '');
     const emptyDraft = buildEmptyTaskDraft(activeProjectId, fallbackStatus);
-    setTaskDraft({ ...emptyDraft, createdBy: currentUser?.id || '' });
-  }, [isTaskModalOpen, selectedTaskId, activeProjectId, initialTaskStatus, columns, selectedTask, setTaskDraft, currentUser?.id]);
+    setTaskDraft({ ...emptyDraft, createdBy: currentUser?.id || '', parentTaskId: initialParentTaskId || undefined });
+  }, [isTaskModalOpen, selectedTaskId, activeProjectId, initialTaskStatus, initialParentTaskId, columns, selectedTask, setTaskDraft, currentUser?.id]);
 
   const handleSave = async () => {
     if (!taskDraft.title) return;
@@ -285,6 +305,68 @@ const TaskModal: React.FC = () => {
             </TextField>
 
             <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 1 }}>
+              PARENT TASK
+            </Typography>
+            <TextField
+              select
+              fullWidth
+              size="small"
+              value={taskDraft.parentTaskId || ''}
+              onChange={(e) => patchTaskDraft({ parentTaskId: e.target.value || undefined })}
+              sx={{ mb: 2 }}
+            >
+              <MenuItem value="">No parent (root task)</MenuItem>
+              {eligibleParents.map(t => (
+                <MenuItem key={t.id} value={t.id}>
+                  <Typography variant="body2" noWrap>{t.title}</Typography>
+                </MenuItem>
+              ))}
+            </TextField>
+
+            {subTasks.length > 0 && (
+              <>
+                <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 1 }}>
+                  SUB-TASKS ({subTasks.length})
+                </Typography>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mb: 2 }}>
+                  {subTasks.map(st => (
+                    <Box
+                      key={st.id}
+                      onClick={() => { closeTaskModal(); setTimeout(() => openTaskModal(st.id), 50); }}
+                      sx={{
+                        display: 'flex', alignItems: 'center', gap: 1, px: 1.5, py: 0.75,
+                        borderRadius: 1, border: '1px solid #e0e0e0', cursor: 'pointer',
+                        '&:hover': { bgcolor: '#f0f4ff' },
+                      }}
+                    >
+                      <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: st.status === 'done' ? 'success.main' : 'primary.main', flexShrink: 0 }} />
+                      <Typography variant="body2" noWrap sx={{ flex: 1 }}>{st.title}</Typography>
+                      <Chip label={st.priority} size="small" sx={{ fontSize: '0.6rem' }} />
+                    </Box>
+                  ))}
+                </Box>
+              </>
+            )}
+
+            {taskDraft.id && (
+              <Button
+                size="small"
+                variant="outlined"
+                fullWidth
+                sx={{ mb: 2, textTransform: 'none' }}
+                onClick={async () => {
+                  if (!taskDraft.title) return;
+                  const id = taskDraft.id || await createTaskId(activeProjectId!);
+                  await saveTask({ ...taskDraft, id, createdBy: taskDraft.createdBy || currentUser?.id || '' } as Task);
+                  closeTaskModal();
+                  setTimeout(() => openTaskModal(null, taskDraft.status, id), 50);
+                }}
+              >
+                + Add Sub-task
+              </Button>
+            )}
+
+            <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 1 }}>
               SCHEDULE
             </Typography>
             <TextField
@@ -335,17 +417,43 @@ const TaskModal: React.FC = () => {
                   <Select
                     multiple
                     value={taskDraft.dependencies ?? []}
-                    onChange={(e) => patchTaskDraft({ dependencies: e.target.value as string[] })}
+                    onChange={(e) => {
+                      const val = e.target.value as string[];
+                      // "none" clears all selections
+                      if (val.includes('__none__')) {
+                        patchTaskDraft({ dependencies: [] });
+                      } else {
+                        patchTaskDraft({ dependencies: val });
+                      }
+                    }}
                     input={<OutlinedInput label="Predecessors" />}
-                    renderValue={(selected) => (
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                        {(selected as string[]).map(id => {
-                          const t = otherTasks.find(x => x.id === id);
-                          return <Chip key={id} label={t?.title ?? id} size="small" />;
-                        })}
-                      </Box>
-                    )}
+                    renderValue={(selected) => {
+                      const ids = selected as string[];
+                      if (ids.length === 0) return <Typography variant="body2" color="text.disabled">None</Typography>;
+                      return (
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                          {ids.map(id => {
+                            const t = otherTasks.find(x => x.id === id);
+                            return (
+                              <Chip
+                                key={id}
+                                label={t?.title ?? id}
+                                size="small"
+                                onDelete={(e) => {
+                                  e.stopPropagation();
+                                  patchTaskDraft({ dependencies: (taskDraft.dependencies ?? []).filter(d => d !== id) });
+                                }}
+                                onMouseDown={(e) => e.stopPropagation()}
+                              />
+                            );
+                          })}
+                        </Box>
+                      );
+                    }}
                   >
+                    <MenuItem value="__none__">
+                      <Typography variant="body2" color="text.secondary">None (clear all)</Typography>
+                    </MenuItem>
                     {otherTasks.map(t => (
                       <MenuItem key={t.id} value={t.id}>
                         <Typography variant="body2" noWrap>{t.title}</Typography>

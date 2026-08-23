@@ -83,7 +83,7 @@ export class SyncService {
     if (!project?.spreadsheetId) return;
 
     // Single batchGet call instead of 4 sequential requests — avoids 429s on load
-    const { config: remoteConfig, members: remoteMembers, tasks: remoteTasks, comments: remoteComments, releases: remoteReleases } =
+    const { config: remoteConfig, members: remoteMembers, tasks: remoteTasks, comments: remoteComments, releases: remoteReleases, users: remoteUsers } =
       await googleSheetsService.pullAllSheetData(project.spreadsheetId);
 
     if (remoteConfig) {
@@ -102,6 +102,13 @@ export class SyncService {
         const taskComments = remoteComments.filter((c: Comment) => c.taskId === remoteTask.id);
         await db.put('tasks', { ...existingTask, ...remoteTask, comments: taskComments } as Task);
       }
+    }
+
+    // Upsert remote users — preserves globalRole from the local record if it exists
+    for (const remoteUser of remoteUsers) {
+      if (!remoteUser.id) continue;
+      const existing = await db.getById<User>('users', remoteUser.id);
+      await db.put('users', { ...remoteUser, globalRole: existing?.globalRole ?? 'User' } as User);
     }
 
     // Sync releases: delete releases not in remote, upsert all remote releases

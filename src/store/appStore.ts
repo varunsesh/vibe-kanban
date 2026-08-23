@@ -10,6 +10,7 @@ interface AppState {
   isTaskModalOpen: boolean;
   selectedTaskId: string | null;
   initialTaskStatus: string | null;
+  initialParentTaskId: string | null;
   columnEditingId: string | null;
   columnTitleDraft: string;
   sidebarOpen: boolean;
@@ -21,7 +22,7 @@ interface AppState {
   setActiveView: (view: ActiveView) => void;
   setSyncing: (syncing: boolean) => void;
   setSheetLinkInput: (value: string) => void;
-  openTaskModal: (taskId: string | null, initialStatus?: string) => void;
+  openTaskModal: (taskId: string | null, initialStatus?: string, parentTaskId?: string) => void;
   closeTaskModal: () => void;
   startColumnRename: (columnId: string, currentTitle: string) => void;
   setColumnTitleDraft: (value: string) => void;
@@ -42,6 +43,7 @@ export const useAppStore = create<AppState>((set) => ({
   isTaskModalOpen: false,
   selectedTaskId: null,
   initialTaskStatus: null,
+  initialParentTaskId: null,
   columnEditingId: null,
   columnTitleDraft: '',
   sidebarOpen: true,
@@ -53,17 +55,19 @@ export const useAppStore = create<AppState>((set) => ({
   setActiveView: (activeView) => set({ activeView }),
   setSyncing: (isSyncing) => set({ isSyncing }),
   setSheetLinkInput: (sheetLinkInput) => set({ sheetLinkInput }),
-  openTaskModal: (selectedTaskId, initialStatus) =>
+  openTaskModal: (selectedTaskId, initialStatus, parentTaskId) =>
     set({
       isTaskModalOpen: true,
       selectedTaskId,
       initialTaskStatus: initialStatus || null,
+      initialParentTaskId: parentTaskId || null,
     }),
   closeTaskModal: () =>
     set({
       isTaskModalOpen: false,
       selectedTaskId: null,
       initialTaskStatus: null,
+      initialParentTaskId: null,
     }),
   startColumnRename: (columnEditingId, columnTitleDraft) =>
     set({ columnEditingId, columnTitleDraft }),
