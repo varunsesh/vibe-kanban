@@ -40,6 +40,22 @@ export function buildTaskTree(tasks: Task[]): TaskNode[] {
   return roots;
 }
 
+/**
+ * Flattens with opt-in expansion: children are only shown when their parent's
+ * ID is in expandedIds. Default state = everything collapsed.
+ */
+export function flattenTreeExpanded(nodes: TaskNode[], expandedIds: Set<string>): TaskNode[] {
+  const result: TaskNode[] = [];
+  const walk = (node: TaskNode) => {
+    result.push(node);
+    if (node.children.length > 0 && expandedIds.has(node.task.id)) {
+      for (const child of node.children) walk(child);
+    }
+  };
+  for (const root of nodes) walk(root);
+  return result;
+}
+
 /** Flattens the tree into an ordered list, skipping children of collapsed nodes. */
 export function flattenTree(nodes: TaskNode[], collapsedIds: Set<string>): TaskNode[] {
   const result: TaskNode[] = [];

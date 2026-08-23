@@ -10,7 +10,7 @@ import { useProjectStore } from '../store/projectStore';
 import { useAppStore } from '../store/appStore';
 import { useUserStore } from '../store/userStore';
 import { Task } from '../db/db';
-import { buildTaskTree, flattenTree, TaskNode, getDescendantIds } from '../utils/taskTree';
+import { buildTaskTree, flattenTreeExpanded, TaskNode, getDescendantIds } from '../utils/taskTree';
 
 const INDENT_PX = 20;
 
@@ -32,7 +32,7 @@ const TaskListView: React.FC = () => {
   const openTaskModal = useAppStore((state) => state.openTaskModal);
   const users = useUserStore((state) => state.users);
 
-  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   // Per-row "+" menu state
   const [menuState, setMenuState] = useState<{ anchor: HTMLElement; taskId: string } | null>(null);
@@ -56,7 +56,7 @@ const TaskListView: React.FC = () => {
   }, [users]);
 
   const tree = useMemo(() => buildTaskTree(tasks), [tasks]);
-  const flatRows = useMemo(() => flattenTree(tree, collapsedIds), [tree, collapsedIds]);
+  const flatRows = useMemo(() => flattenTreeExpanded(tree, expandedIds), [tree, expandedIds]);
 
   // Tasks eligible to be linked as sub-task under a parent
   const linkableTasks = useMemo(() => {
@@ -72,7 +72,7 @@ const TaskListView: React.FC = () => {
   }, [linkDialog, tasks, linkSearch]);
 
   const toggle = (id: string) => {
-    setCollapsedIds(prev => {
+    setExpandedIds(prev => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
@@ -118,7 +118,7 @@ const TaskListView: React.FC = () => {
     const { task, children, depth } = node;
     const assignee = task.assigneeId ? usersById.get(task.assigneeId) : null;
     const hasChildren = children.length > 0;
-    const isCollapsed = collapsedIds.has(task.id);
+    const isCollapsed = !expandedIds.has(task.id);
 
     return (
       <Draggable key={task.id} draggableId={task.id} index={dragIndex}>

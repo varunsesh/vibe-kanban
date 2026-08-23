@@ -5,7 +5,7 @@ import { useProjectStore } from '../store/projectStore';
 import { useAppStore } from '../store/appStore';
 import { Task } from '../db/db';
 import { computeCriticalPath } from '../utils/criticalPath';
-import { buildTaskTree, flattenTree, TaskNode } from '../utils/taskTree';
+import { buildTaskTree, flattenTreeExpanded, TaskNode } from '../utils/taskTree';
 
 const DAY_MS = 86_400_000;
 const DAY_W = 28;
@@ -22,11 +22,12 @@ const toDateStr = (ts: number) => new Date(ts).toLocaleDateString();
 
 const GanttView: React.FC = () => {
   const tasks = useProjectStore(s => s.tasks);
+  const releases = useProjectStore(s => s.releases);
   const openTaskModal = useAppStore(s => s.openTaskModal);
 
-  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
-  const toggle = (id: string) => setCollapsedIds(prev => {
+  const toggle = (id: string) => setExpandedIds(prev => {
     const next = new Set(prev);
     next.has(id) ? next.delete(id) : next.add(id);
     return next;
@@ -34,7 +35,7 @@ const GanttView: React.FC = () => {
 
   // Build task tree so we respect hierarchy in ordering
   const tree = useMemo(() => buildTaskTree(tasks), [tasks]);
-  const flatNodes = useMemo(() => flattenTree(tree, collapsedIds), [tree, collapsedIds]);
+  const flatNodes = useMemo(() => flattenTreeExpanded(tree, expandedIds), [tree, expandedIds]);
 
   // For each node, compute its display schedule.
   // Explicit startDate + duration → use as-is.
@@ -156,6 +157,31 @@ const GanttView: React.FC = () => {
     return paths;
   }, [displayRows, rowOf, criticalSet, timelineStart]);
 
+  // Release landmarks — vertical lines at the latest task end date per release
+  const STATUS_COLORS: Record<string, string> = {
+    'Planned':     '#1565c0',
+    'In Progress': '#e65100',
+    'Released':    '#2e7d32',
+    'Archived':    '#757575',
+  };
+
+  const releaseLandmarks = useMemo(() => {
+    return releases.flatMap(release => {
+      const relTasks = tasks.filter(t => t.releaseId === release.id);
+      const endDates = relTasks.flatMap(t => {
+        const candidates: number[] = [];
+        if (t.dueDate) candidates.push(t.dueDate);
+        if (t.startDate && t.duration) candidates.push(t.startDate + t.duration * DAY_MS);
+        return candidates;
+      });
+      if (endDates.length === 0) return [];
+      const milestoneTs = Math.max(...endDates);
+      const x = (milestoneTs - timelineStart) / DAY_MS * DAY_W;
+      if (x < 0 || x > totalDays * DAY_W) return [];
+      return [{ release, x, milestoneTs }];
+    });
+  }, [releases, tasks, timelineStart, totalDays]);
+
   const isWeekend = (d: Date) => d.getDay() === 0 || d.getDay() === 6;
 
   return (
@@ -206,7 +232,7 @@ const GanttView: React.FC = () => {
           {displayRows.map(({ node, scheduled }, i) => {
             const { task, children, depth } = node;
             const hasChildren = children.length > 0;
-            const isCollapsed = collapsedIds.has(task.id);
+            const isCollapsed = !expandedIds.has(task.id);
             const isCritical = criticalSet.has(task.id);
             const isSummary = !!scheduled.isSummary;
             const rowBg = i % 2 === 0 ? '#fafafa' : '#ffffff';
@@ -325,6 +351,62 @@ const GanttView: React.FC = () => {
                   markerEnd={arrow.critical ? 'url(#arr-c)' : 'url(#arr-n)'}
                 />
               ))}
+            </svg>
+          )}
+
+          {/* ── Release landmark lines ── */}
+          {releaseLandmarks.length > 0 && (
+            <svg
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: LABEL_W,
+                width: totalDays * DAY_W,
+                height: '100%',
+                pointerEvents: 'none',
+                overflow: 'visible',
+              }}
+            >
+              {releaseLandmarks.map(({ release, x, milestoneTs }) => {
+                const color = STATUS_COLORS[release.status] ?? '#1565c0';
+                return (
+                  <g key={release.id}>
+                    {/* Vertical dashed line */}
+                    <line
+                      x1={x} y1={HEADER_H} x2={x}
+                      y2={(displayRows.length + unscheduledNodes.length) * ROW_H + HEADER_H + 30}
+                      stroke={color} strokeWidth={2} strokeDasharray="6 3" opacity={0.8}
+                    />
+                    {/* Diamond milestone marker */}
+                    <polygon
+                      points={`${x},${HEADER_H - 4} ${x + 6},${HEADER_H + 6} ${x},${HEADER_H + 16} ${x - 6},${HEADER_H + 6}`}
+                      fill={color} opacity={0.9}
+                    />
+                    {/* Label pill */}
+                    <foreignObject x={x + 8} y={HEADER_H} width={140} height={24}>
+                      <div
+                        style={{
+                          background: color,
+                          color: 'white',
+                          fontSize: '0.65rem',
+                          fontWeight: 700,
+                          padding: '2px 7px',
+                          borderRadius: 10,
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          display: 'inline-block',
+                          maxWidth: 132,
+                          lineHeight: '18px',
+                        }}
+                        title={`${release.name} — ${new Date(milestoneTs).toLocaleDateString()}`}
+                      >
+                        {release.name}
+                      </div>
+                    </foreignObject>
+                  </g>
+                );
+              })}
             </svg>
           )}
 
