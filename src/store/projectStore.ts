@@ -279,7 +279,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const appStore = useAppStore.getState();
     appStore.setSyncing(true);
     try {
-      await syncService.pullProject(projectId);
+      await syncService.forcePullProject(projectId);
       await get().loadTasks(projectId);
       await get().loadReleases(projectId);
     } finally {

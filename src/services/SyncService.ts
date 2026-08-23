@@ -3,15 +3,34 @@ import { googleSheetsService } from './googleSheets';
 
 type SheetData = Awaited<ReturnType<typeof googleSheetsService.pullAllSheetData>>;
 
+// How long to wait after a successful pull before pulling again for the same project.
+const PULL_COOLDOWN_MS = 45_000;
+
 export class SyncService {
   private readonly pushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  debouncedPush(projectId: string, delayMs = 3000) {
+  // Per-project promise chain — ensures push and pull never run concurrently
+  // for the same project. Each new operation waits for the previous one to finish.
+  private readonly opChain = new Map<string, Promise<void>>();
+
+  // Timestamp of the last successful pull per project.
+  private readonly lastPulledAt = new Map<string, number>();
+
+  // ── Lock helpers ────────────────────────────────────────────────────────────
+  private enqueue(projectId: string, fn: () => Promise<void>): Promise<void> {
+    const prev = this.opChain.get(projectId) ?? Promise.resolve();
+    const next = prev.then(() => fn()).catch(() => {/* errors don't break the chain */});
+    this.opChain.set(projectId, next);
+    return next;
+  }
+
+  // ── Public API ──────────────────────────────────────────────────────────────
+  debouncedPush(projectId: string, delayMs = 5000) {
     const existing = this.pushTimers.get(projectId);
     if (existing) clearTimeout(existing);
     const timer = setTimeout(() => {
       this.pushTimers.delete(projectId);
-      this.pushProject(projectId).catch(console.error);
+      this.enqueue(projectId, () => this.pushProject(projectId)).catch(console.error);
     }, delayMs);
     this.pushTimers.set(projectId, timer);
   }
@@ -39,11 +58,29 @@ export class SyncService {
     const lastSyncedAt = spreadsheetId === project.spreadsheetId ? (project.lastSyncedAt ?? 0) : 0;
     await db.put('projects', { ...project, spreadsheetId, lastSyncedAt });
 
-    await this.pushProject(projectId);
-    return spreadsheetId;
+    return this.enqueue(projectId, () => this.pushProject(projectId)).then(() => spreadsheetId);
   }
 
-  async pushProject(projectId: string) {
+  /** Queue a pull. Skips the network call if a pull happened within PULL_COOLDOWN_MS. */
+  pullProject(projectId: string): Promise<void> {
+    return this.enqueue(projectId, async () => {
+      const last = this.lastPulledAt.get(projectId) ?? 0;
+      if (Date.now() - last < PULL_COOLDOWN_MS) return; // cooled down — skip
+      await this._pullProject(projectId);
+      this.lastPulledAt.set(projectId, Date.now());
+    });
+  }
+
+  /** Force a pull regardless of cooldown (used by the manual refresh button). */
+  forcePullProject(projectId: string): Promise<void> {
+    return this.enqueue(projectId, async () => {
+      await this._pullProject(projectId);
+      this.lastPulledAt.set(projectId, Date.now());
+    });
+  }
+
+  // ── Private implementation ──────────────────────────────────────────────────
+  private async pushProject(projectId: string) {
     const project = await db.getById<Project>('projects', projectId);
     if (!project?.spreadsheetId) return;
 
@@ -51,15 +88,14 @@ export class SyncService {
     await googleSheetsService.ensureRequiredSheets(project.spreadsheetId);
 
     // One batchGet for lastUpdated timestamp + all sheet data.
-    // If the sheet is ahead of our last push, apply remote data first before writing.
     const sheetData = await googleSheetsService.pullAllSheetData(project.spreadsheetId);
     const localLastSynced = project.lastSyncedAt ?? 0;
 
     if (localLastSynced < sheetData.lastUpdatedTs) {
       await this.applySheetData(projectId, project, sheetData);
+      this.lastPulledAt.set(projectId, Date.now());
     }
 
-    // Re-read from local DB (may have been updated by applySheetData above)
     const [updatedProject, tasks, users, releases] = await Promise.all([
       db.getById<Project>('projects', projectId),
       db.getTasksByProject(projectId),
@@ -70,12 +106,11 @@ export class SyncService {
     if (!updatedProject?.spreadsheetId) return;
 
     const now = Date.now();
-    // syncProject writes lastUpdated inside the same batchUpdate — no separate PUT needed.
     await googleSheetsService.syncProject(updatedProject, tasks, users, releases, now);
     await db.put('projects', { ...updatedProject, lastSyncedAt: now });
   }
 
-  async pullProject(projectId: string) {
+  private async _pullProject(projectId: string) {
     const project = await db.getById<Project>('projects', projectId);
     if (!project?.spreadsheetId) return;
 
@@ -83,9 +118,6 @@ export class SyncService {
     await this.applySheetData(projectId, project, sheetData);
   }
 
-  // Applies already-fetched sheet data to the local IndexedDB.
-  // Shared between pullProject and the "pull before push" path in pushProject
-  // so we never fetch the same data twice.
   private async applySheetData(projectId: string, project: Project, data: SheetData) {
     const { config: remoteConfig, members: remoteMembers, tasks: remoteTasks, comments: remoteComments, releases: remoteReleases, users: remoteUsers } = data;
 
