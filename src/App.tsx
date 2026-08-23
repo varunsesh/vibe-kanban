@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Typography, CssBaseline, ThemeProvider, createTheme, Button, Paper, TextField, Divider, List, ListItem, ListItemText, ListItemSecondaryAction, IconButton, Select, MenuItem, FormControl, InputLabel, Chip } from '@mui/material';
+import { Box, Typography, CssBaseline, ThemeProvider, createTheme, Button, Paper, TextField, Divider, List, ListItem, ListItemText, ListItemSecondaryAction, IconButton, Select, MenuItem, FormControl, InputLabel, Chip, Tooltip } from '@mui/material';
 import { DragDropContext, DropResult } from '@hello-pangea/dnd';
-import { LogIn, Plus, Trash2, UserPlus, FileSpreadsheet, RefreshCw, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { LogIn, Plus, Trash2, UserPlus, FileSpreadsheet, RefreshCw, ShieldCheck, ShieldAlert, LayoutDashboard, GanttChart } from 'lucide-react';
 import { auth, onAuthStateChanged, handleRedirectResult } from './auth/firebase';
 import Sidebar from './components/Sidebar';
 import Column from './components/Column';
@@ -48,6 +48,7 @@ const App: React.FC = () => {
   const removeMember = useProjectStore((state) => state.removeMember);
 
   const activeView = useAppStore((state) => state.activeView);
+  const setActiveView = useAppStore((state) => state.setActiveView);
   const sheetLinkInput = useAppStore((state) => state.sheetLinkInput);
   const isSyncing = useAppStore((state) => state.isSyncing);
   const setSheetLinkInput = useAppStore((state) => state.setSheetLinkInput);
@@ -458,23 +459,9 @@ const App: React.FC = () => {
                 </Box>
               )}
             </Box>
-          ) : activeView === 'gantt' && activeProject ? (
-            <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-              <Box sx={{ mb: 2, flexShrink: 0 }}>
-                <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
-                  {activeProject.name} — Gantt Chart
-                </Typography>
-                <Typography variant="body2" sx={{ opacity: 0.9 }}>
-                  Critical path highlighted in red · Click any bar to edit the task
-                </Typography>
-              </Box>
-              <Box sx={{ flexGrow: 1, overflow: 'hidden', borderRadius: 1 }}>
-                <GanttView />
-              </Box>
-            </Box>
           ) : activeProject ? (
             <>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Box>
                   <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
                     {activeProject.name}
@@ -483,30 +470,69 @@ const App: React.FC = () => {
                     Signed in as {currentUser.displayName}
                   </Typography>
                 </Box>
-                {canEditProject && activeReleaseId && (
-                  <Button
-                    variant="contained"
-                    startIcon={<Plus />}
-                    onClick={() => void addColumn()}
-                    sx={{ bgcolor: 'rgba(255,255,255,0.2)', '&:hover': { bgcolor: 'rgba(255,255,255,0.3)' } }}
-                  >
-                    Add Column
-                  </Button>
-                )}
-              </Box>
-
-              <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1, overflow: 'hidden' }}>
-                <ReleaseTabs />
-                <Box sx={{ flexGrow: 1, overflowX: 'auto', p: 2 }}>
-                  {activeReleaseId ? (
-                    <DragDropContext onDragEnd={(result) => void onDragEnd(result)}>
-                      <Column />
-                    </DragDropContext>
-                  ) : (
-                    <TaskListView />
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  {/* Board / Gantt view toggle */}
+                  <Box sx={{ display: 'flex', bgcolor: 'rgba(255,255,255,0.15)', borderRadius: 1, p: 0.5, gap: 0.5 }}>
+                    <Tooltip title="Board / List view">
+                      <IconButton
+                        size="small"
+                        onClick={() => setActiveView('board')}
+                        sx={{
+                          color: activeView !== 'gantt' ? 'white' : 'rgba(255,255,255,0.5)',
+                          bgcolor: activeView !== 'gantt' ? 'rgba(255,255,255,0.25)' : 'transparent',
+                          borderRadius: 0.75,
+                          '&:hover': { bgcolor: 'rgba(255,255,255,0.3)' },
+                        }}
+                      >
+                        <LayoutDashboard size={18} />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Gantt chart">
+                      <IconButton
+                        size="small"
+                        onClick={() => setActiveView('gantt')}
+                        sx={{
+                          color: activeView === 'gantt' ? 'white' : 'rgba(255,255,255,0.5)',
+                          bgcolor: activeView === 'gantt' ? 'rgba(255,255,255,0.25)' : 'transparent',
+                          borderRadius: 0.75,
+                          '&:hover': { bgcolor: 'rgba(255,255,255,0.3)' },
+                        }}
+                      >
+                        <GanttChart size={18} />
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
+                  {canEditProject && activeReleaseId && activeView !== 'gantt' && (
+                    <Button
+                      variant="contained"
+                      startIcon={<Plus />}
+                      onClick={() => void addColumn()}
+                      sx={{ bgcolor: 'rgba(255,255,255,0.2)', '&:hover': { bgcolor: 'rgba(255,255,255,0.3)' } }}
+                    >
+                      Add Column
+                    </Button>
                   )}
                 </Box>
               </Box>
+
+              {activeView === 'gantt' ? (
+                <Box sx={{ flexGrow: 1, overflow: 'hidden', borderRadius: 1 }}>
+                  <GanttView />
+                </Box>
+              ) : (
+                <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1, overflow: 'hidden' }}>
+                  <ReleaseTabs />
+                  <Box sx={{ flexGrow: 1, overflowX: 'auto', p: 2 }}>
+                    {activeReleaseId ? (
+                      <DragDropContext onDragEnd={(result) => void onDragEnd(result)}>
+                        <Column />
+                      </DragDropContext>
+                    ) : (
+                      <TaskListView />
+                    )}
+                  </Box>
+                </Box>
+              )}
             </>
           ) : (
             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>

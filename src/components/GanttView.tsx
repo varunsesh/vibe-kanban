@@ -87,22 +87,28 @@ const GanttView: React.FC = () => {
   );
   const criticalSet = useMemo(() => computeCriticalPath(explicitlyScheduled), [explicitlyScheduled]);
 
-  // Timeline bounds
+  // Timeline bounds — include release scheduled dates so landmarks always have room
   const { timelineStart, totalDays } = useMemo(() => {
     const allScheduled = displayRows.map(r => r.scheduled);
-    if (allScheduled.length === 0) {
+    const releaseDates = releases.flatMap(r => r.scheduledDate ? [r.scheduledDate] : []);
+    const allDates = [
+      ...allScheduled.map(t => t.startDate),
+      ...allScheduled.map(t => t.startDate + t.duration * DAY_MS),
+      ...releaseDates,
+    ];
+    if (allDates.length === 0) {
       const today = new Date(); today.setHours(0, 0, 0, 0);
       return { timelineStart: today.getTime(), totalDays: 30 };
     }
-    const earliest = Math.min(...allScheduled.map(t => t.startDate));
-    const latest = Math.max(...allScheduled.map(t => t.startDate + t.duration * DAY_MS));
+    const earliest = Math.min(...allDates);
+    const latest = Math.max(...allDates);
     const start = new Date(earliest - 3 * DAY_MS);
     start.setHours(0, 0, 0, 0);
     return {
       timelineStart: start.getTime(),
-      totalDays: Math.ceil((latest + 3 * DAY_MS - start.getTime()) / DAY_MS),
+      totalDays: Math.ceil((latest + 7 * DAY_MS - start.getTime()) / DAY_MS),
     };
-  }, [displayRows]);
+  }, [displayRows, releases]);
 
   const totalWidth = LABEL_W + totalDays * DAY_W;
 
@@ -167,15 +173,19 @@ const GanttView: React.FC = () => {
 
   const releaseLandmarks = useMemo(() => {
     return releases.flatMap(release => {
-      const relTasks = tasks.filter(t => t.releaseId === release.id);
-      const endDates = relTasks.flatMap(t => {
-        const candidates: number[] = [];
-        if (t.dueDate) candidates.push(t.dueDate);
-        if (t.startDate && t.duration) candidates.push(t.startDate + t.duration * DAY_MS);
-        return candidates;
-      });
-      if (endDates.length === 0) return [];
-      const milestoneTs = Math.max(...endDates);
+      // Prefer the explicit scheduled date; fall back to latest task end date
+      let milestoneTs: number | undefined = release.scheduledDate;
+      if (!milestoneTs) {
+        const relTasks = tasks.filter(t => t.releaseId === release.id);
+        const endDates = relTasks.flatMap(t => {
+          const candidates: number[] = [];
+          if (t.dueDate) candidates.push(t.dueDate);
+          if (t.startDate && t.duration) candidates.push(t.startDate + t.duration * DAY_MS);
+          return candidates;
+        });
+        if (endDates.length > 0) milestoneTs = Math.max(...endDates);
+      }
+      if (!milestoneTs) return [];
       const x = (milestoneTs - timelineStart) / DAY_MS * DAY_W;
       if (x < 0 || x > totalDays * DAY_W) return [];
       return [{ release, x, milestoneTs }];
@@ -355,60 +365,61 @@ const GanttView: React.FC = () => {
           )}
 
           {/* ── Release landmark lines ── */}
-          {releaseLandmarks.length > 0 && (
-            <svg
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: LABEL_W,
-                width: totalDays * DAY_W,
-                height: '100%',
-                pointerEvents: 'none',
-                overflow: 'visible',
-              }}
-            >
-              {releaseLandmarks.map(({ release, x, milestoneTs }) => {
-                const color = STATUS_COLORS[release.status] ?? '#1565c0';
-                return (
-                  <g key={release.id}>
-                    {/* Vertical dashed line */}
-                    <line
-                      x1={x} y1={HEADER_H} x2={x}
-                      y2={(displayRows.length + unscheduledNodes.length) * ROW_H + HEADER_H + 30}
-                      stroke={color} strokeWidth={2} strokeDasharray="6 3" opacity={0.8}
-                    />
-                    {/* Diamond milestone marker */}
-                    <polygon
-                      points={`${x},${HEADER_H - 4} ${x + 6},${HEADER_H + 6} ${x},${HEADER_H + 16} ${x - 6},${HEADER_H + 6}`}
-                      fill={color} opacity={0.9}
-                    />
-                    {/* Label pill */}
-                    <foreignObject x={x + 8} y={HEADER_H} width={140} height={24}>
-                      <div
-                        style={{
-                          background: color,
-                          color: 'white',
-                          fontSize: '0.65rem',
-                          fontWeight: 700,
-                          padding: '2px 7px',
-                          borderRadius: 10,
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          display: 'inline-block',
-                          maxWidth: 132,
-                          lineHeight: '18px',
-                        }}
-                        title={`${release.name} — ${new Date(milestoneTs).toLocaleDateString()}`}
-                      >
-                        {release.name}
-                      </div>
-                    </foreignObject>
-                  </g>
-                );
-              })}
-            </svg>
-          )}
+          {releaseLandmarks.length > 0 && (() => {
+            const unschedSectionH = unscheduledNodes.length > 0 ? 30 + unscheduledNodes.length * ROW_H : 0;
+            const svgH = HEADER_H + displayRows.length * ROW_H + unschedSectionH + 40;
+            return (
+              <svg
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: LABEL_W,
+                  width: totalDays * DAY_W,
+                  height: svgH,
+                  pointerEvents: 'none',
+                  overflow: 'visible',
+                  zIndex: 5,
+                }}
+              >
+                {releaseLandmarks.map(({ release, x, milestoneTs }) => {
+                  const color = STATUS_COLORS[release.status] ?? '#1565c0';
+                  const lineY2 = svgH;
+                  return (
+                    <g key={release.id}>
+                      {/* Vertical dashed line */}
+                      <line
+                        x1={x} y1={HEADER_H} x2={x} y2={lineY2}
+                        stroke={color} strokeWidth={2} strokeDasharray="6 4" opacity={0.75}
+                      />
+                      {/* Diamond milestone marker */}
+                      <polygon
+                        points={`${x},${HEADER_H + 2} ${x + 7},${HEADER_H + 12} ${x},${HEADER_H + 22} ${x - 7},${HEADER_H + 12}`}
+                        fill={color} opacity={0.95}
+                      />
+                      {/* Label: name + date */}
+                      <foreignObject x={x + 10} y={HEADER_H + 2} width={160} height={22}>
+                        <div
+                          style={{
+                            background: color,
+                            color: 'white',
+                            fontSize: '0.6rem',
+                            fontWeight: 700,
+                            padding: '2px 7px',
+                            borderRadius: 10,
+                            whiteSpace: 'nowrap',
+                            display: 'inline-block',
+                            lineHeight: '16px',
+                          }}
+                        >
+                          {release.name} · {new Date(milestoneTs).toLocaleDateString()}
+                        </div>
+                      </foreignObject>
+                    </g>
+                  );
+                })}
+              </svg>
+            );
+          })()}
 
           {displayRows.length === 0 && unscheduledNodes.length === 0 && (
             <Box sx={{ p: 6, textAlign: 'center' }}>
