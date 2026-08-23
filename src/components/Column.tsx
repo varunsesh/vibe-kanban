@@ -23,6 +23,16 @@ const Column: React.FC = () => {
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const columns = activeProject?.columns || [];
 
+  // Only show leaf tasks on the board — tasks that have no children.
+  // Parent/summary tasks are managed via the task list view.
+  const parentIds = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const task of tasks) {
+      if (task.parentTaskId) set.add(task.parentTaskId);
+    }
+    return set;
+  }, [tasks]);
+
   const users = useUserStore((state) => state.users);
   const usersById = React.useMemo(() => {
     const map = new Map<string, (typeof users)[number]>();
@@ -102,7 +112,7 @@ const Column: React.FC = () => {
                   }}
                 >
                   {tasks
-                    .filter((task) => task.status === column.id)
+                    .filter((task) => task.status === column.id && !parentIds.has(task.id))
                     .map((task, index) => (
                       <Draggable key={task.id} draggableId={task.id} index={index}>
                         {(dragProvided) => (

@@ -5,6 +5,26 @@ import { syncService } from '../services/SyncService';
 import { useAppStore } from './appStore';
 import { useUserStore } from './userStore';
 
+// Walk up the parent chain after a status change. When every child of a parent
+// shares the same status, the parent is updated to match. Recurses to the root.
+const propagateStatusUp = async (taskId: string, projectId: string): Promise<void> => {
+  const task = await db.getById<Task>('tasks', taskId);
+  if (!task?.parentTaskId) return;
+
+  const all = await db.getTasksByProject(projectId);
+  const siblings = all.filter(t => t.parentTaskId === task.parentTaskId);
+  if (siblings.length === 0) return;
+
+  const unanimousStatus = siblings[0].status;
+  if (!siblings.every(s => s.status === unanimousStatus)) return;
+
+  const parent = await db.getById<Task>('tasks', task.parentTaskId);
+  if (!parent || parent.status === unanimousStatus) return;
+
+  await db.put('tasks', { ...parent, status: unanimousStatus });
+  await propagateStatusUp(task.parentTaskId, projectId);
+};
+
 interface ProjectState {
   projects: Project[];
   tasks: Task[];
@@ -353,6 +373,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     await db.put('tasks', taskToSave);
     if (!activeProjectId) return;
+    await propagateStatusUp(taskToSave.id, activeProjectId);
     await get().loadTasks(activeProjectId);
     syncService.debouncedPush(activeProjectId);
   },
@@ -399,6 +420,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     await db.put('tasks', updatedTask);
 
     if (activeProjectId) {
+      await propagateStatusUp(updatedTask.id, activeProjectId);
+      await get().loadTasks(activeProjectId);
       syncService.debouncedPush(activeProjectId);
     }
   },
