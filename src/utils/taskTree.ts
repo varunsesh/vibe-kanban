@@ -22,6 +22,15 @@ export function buildTaskTree(tasks: Task[]): TaskNode[] {
     }
   }
 
+  const sortKey = (n: TaskNode) => n.task.sortOrder ?? n.task.createdAt;
+  const sortNodes = (nodes: TaskNode[]) => nodes.sort((a, b) => sortKey(a) - sortKey(b));
+
+  const sortRecursive = (nodes: TaskNode[]) => {
+    sortNodes(nodes);
+    for (const n of nodes) sortRecursive(n.children);
+  };
+  sortRecursive(roots);
+
   const assignDepth = (node: TaskNode, depth: number) => {
     node.depth = depth;
     for (const child of node.children) assignDepth(child, depth + 1);

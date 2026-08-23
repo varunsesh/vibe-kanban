@@ -82,7 +82,7 @@ export class GoogleSheetsService {
   async setupHeaders(spreadsheetId: string) {
     await this.ensureRequiredSheets(spreadsheetId);
     await this.batchUpdateValues(spreadsheetId, [
-      { range: 'Tasks!A1:N1',    values: [['ID', 'ProjectID', 'Title', 'Description', 'Status', 'Priority', 'DueDate', 'AssigneeId', 'CreatedBy', 'CreatedAt', 'StartDate', 'Duration', 'Dependencies', 'ParentTaskID']] },
+      { range: 'Tasks!A1:O1',    values: [['ID', 'ProjectID', 'Title', 'Description', 'Status', 'Priority', 'DueDate', 'AssigneeId', 'CreatedBy', 'CreatedAt', 'StartDate', 'Duration', 'Dependencies', 'ParentTaskID', 'SortOrder']] },
       { range: 'Config!A1:F1',   values: [['ID', 'Name', 'Description', 'ColumnsJSON', 'OwnerID', 'CreatedAt']] },
       { range: 'Members!A1:C1',  values: [['ProjectID', 'UserID', 'Role']] },
       { range: 'Comments!A1:F1', values: [['ID', 'TaskID', 'UserID', 'UserName', 'Text', 'CreatedAt']] },
@@ -142,7 +142,7 @@ export class GoogleSheetsService {
 
     // Clear all data rows in one request so deleted records don't persist
     await this.batchClearRanges(id, [
-      'Tasks!A2:N100000',
+      'Tasks!A2:O100000',
       'Members!A2:C10000',
       'Comments!A2:F100000',
       'Releases!A2:G10000',
@@ -163,6 +163,7 @@ export class GoogleSheetsService {
       task.startDate || '', task.duration || '',
       (task.dependencies ?? []).join(','),
       task.parentTaskId || '',
+      task.sortOrder ?? '',
     ]);
 
     // Write all data in one batch request
@@ -178,7 +179,7 @@ export class GoogleSheetsService {
 
     if (memberData.length > 0)  updates.push({ range: `Members!A2:C${memberData.length + 1}`,   values: memberData });
     if (commentData.length > 0) updates.push({ range: `Comments!A2:F${commentData.length + 1}`, values: commentData });
-    if (taskData.length > 0)    updates.push({ range: `Tasks!A2:N${taskData.length + 1}`,       values: taskData });
+    if (taskData.length > 0)    updates.push({ range: `Tasks!A2:O${taskData.length + 1}`,       values: taskData });
     if (releaseData.length > 0) updates.push({ range: `Releases!A2:G${releaseData.length + 1}`, values: releaseData });
     if (userData.length > 0)   updates.push({ range: `Users!A2:D${userData.length + 1}`,       values: userData });
 
@@ -186,7 +187,7 @@ export class GoogleSheetsService {
   }
 
   async pullTasks(spreadsheetId: string): Promise<Partial<Task>[]> {
-    const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values/Tasks!A2:N10000`;
+    const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values/Tasks!A2:O10000`;
     const data = await this.fetchGoogleApi(url);
     const rows = data.values || [];
 
@@ -205,6 +206,7 @@ export class GoogleSheetsService {
       duration: row[11] ? Number(row[11]) : undefined,
       dependencies: row[12] ? String(row[12]).split(',').filter(Boolean) : [],
       parentTaskId: row[13] || undefined,
+      sortOrder: row[14] !== undefined && row[14] !== '' ? Number(row[14]) : undefined,
     }));
   }
 
@@ -242,7 +244,7 @@ export class GoogleSheetsService {
     releases: Release[];
     users: Partial<User>[];
   }> {
-    const ranges = ['Config!A2:F2', 'Members!A2:C10000', 'Tasks!A2:N10000', 'Comments!A2:F100000', 'Releases!A2:G10000', 'Users!A2:D10000'];
+    const ranges = ['Config!A2:F2', 'Members!A2:C10000', 'Tasks!A2:O10000', 'Comments!A2:F100000', 'Releases!A2:G10000', 'Users!A2:D10000'];
     const query = ranges.map(r => `ranges=${encodeURIComponent(r)}`).join('&');
     const url = `${GOOGLE_API_BASE}/${spreadsheetId}/values:batchGet?${query}`;
 

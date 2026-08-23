@@ -34,6 +34,8 @@ interface ProjectState {
   addComment: (taskId: string, text: string) => Promise<void>;
   addMember: (projectId: string, userId: string, role: 'Project Manager' | 'Member') => Promise<void>;
   removeMember: (projectId: string, userId: string) => Promise<void>;
+  reorderTasks: (draggedId: string, targetId: string) => Promise<void>;
+  linkAsSubTask: (taskId: string, parentId: string) => Promise<void>;
 }
 
 const sanitizeProjectName = (name: string) =>
@@ -431,6 +433,44 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     await db.put('projects', { ...project, members });
     await get().loadProjects();
     syncService.debouncedPush(projectId);
+  },
+  reorderTasks: async (draggedId: string, targetId: string) => {
+    const { activeProjectId, tasks } = get();
+    if (!activeProjectId || draggedId === targetId) return;
+
+    const dragged = tasks.find(t => t.id === draggedId);
+    const target = tasks.find(t => t.id === targetId);
+    if (!dragged || !target) return;
+
+    // Only reorder within same parent
+    if (dragged.parentTaskId !== target.parentTaskId) return;
+
+    // Get siblings in current display order (sortOrder ?? createdAt)
+    const siblings = tasks
+      .filter(t => t.parentTaskId === dragged.parentTaskId && t.projectId === activeProjectId)
+      .sort((a, b) => (a.sortOrder ?? a.createdAt) - (b.sortOrder ?? b.createdAt));
+
+    const fromIdx = siblings.findIndex(t => t.id === draggedId);
+    const toIdx = siblings.findIndex(t => t.id === targetId);
+    if (fromIdx === -1 || toIdx === -1) return;
+
+    const reordered = [...siblings];
+    const [removed] = reordered.splice(fromIdx, 1);
+    reordered.splice(toIdx, 0, removed);
+
+    const STEP = 1000;
+    await Promise.all(reordered.map((t, i) => db.put('tasks', { ...t, sortOrder: i * STEP })));
+    await get().loadTasks(activeProjectId);
+    syncService.debouncedPush(activeProjectId);
+  },
+  linkAsSubTask: async (taskId: string, parentId: string) => {
+    const { activeProjectId } = get();
+    if (!activeProjectId) return;
+    const task = await db.getById<Task>('tasks', taskId);
+    if (!task) return;
+    await db.put('tasks', { ...task, parentTaskId: parentId });
+    await get().loadTasks(activeProjectId);
+    syncService.debouncedPush(activeProjectId);
   },
   removeMember: async (projectId: string, userId: string) => {
     const project = await db.getById<Project>('projects', projectId);
