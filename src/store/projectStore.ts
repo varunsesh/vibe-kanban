@@ -337,10 +337,18 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     // Set createdBy for new tasks
     const existing = await db.getById<Task>('tasks', task.id);
+
+    // Inherit releaseId from parent if not explicitly set
+    let releaseId = task.releaseId || (existing ? existing.releaseId : undefined) || activeReleaseId || undefined;
+    if (!releaseId && task.parentTaskId) {
+      const parent = await db.getById<Task>('tasks', task.parentTaskId);
+      if (parent?.releaseId) releaseId = parent.releaseId;
+    }
+
     const taskToSave = {
       ...task,
       createdBy: existing?.createdBy || currentUser.id,
-      releaseId: task.releaseId || (existing ? existing.releaseId : (activeReleaseId || undefined)),
+      releaseId,
     };
 
     await db.put('tasks', taskToSave);
@@ -468,9 +476,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   linkAsSubTask: async (taskId: string, parentId: string) => {
     const { activeProjectId } = get();
     if (!activeProjectId) return;
-    const task = await db.getById<Task>('tasks', taskId);
+    const [task, parent] = await Promise.all([
+      db.getById<Task>('tasks', taskId),
+      db.getById<Task>('tasks', parentId),
+    ]);
     if (!task) return;
-    await db.put('tasks', { ...task, parentTaskId: parentId });
+    // Inherit parent's releaseId when linking
+    const releaseId = parent?.releaseId ?? task.releaseId;
+    await db.put('tasks', { ...task, parentTaskId: parentId, releaseId });
     await get().loadTasks(activeProjectId);
     syncService.debouncedPush(activeProjectId);
   },
