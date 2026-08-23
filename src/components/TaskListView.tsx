@@ -3,9 +3,8 @@ import {
   Box, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Typography, Chip, Avatar, Tooltip, Button, IconButton, Menu, MenuItem,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField,
-  Select, FormControl, InputLabel,
 } from '@mui/material';
-import { Plus, ChevronRight, ChevronDown, GripVertical, GitMerge } from 'lucide-react';
+import { Plus, ChevronRight, ChevronDown, GripVertical, GitMerge, Filter } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { useProjectStore } from '../store/projectStore';
 import { useAppStore } from '../store/appStore';
@@ -252,26 +251,103 @@ const TaskListView: React.FC = () => {
     );
   };
 
+  const releaseStatusColor: Record<string, { bg: string; text: string; border: string }> = {
+    'Planned':     { bg: '#e8f0fe', text: '#1a56db', border: '#a4c2f4' },
+    'In Progress': { bg: '#fff3e0', text: '#e65100', border: '#ffcc80' },
+    'Released':    { bg: '#e8f5e9', text: '#2e7d32', border: '#a5d6a7' },
+    'Archived':    { bg: '#f5f5f5', text: '#616161', border: '#bdbdbd' },
+  };
+
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 2 }}>
-      {/* Toolbar: filter + add button */}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-        <FormControl size="small" sx={{ minWidth: 200 }}>
-          <InputLabel>Filter by Release</InputLabel>
-          <Select
-            label="Filter by Release"
-            value={releaseFilter}
-            onChange={(e) => setReleaseFilter(e.target.value)}
-          >
-            <MenuItem value="__all__">All Releases</MenuItem>
-            <MenuItem value="__none__">No Release</MenuItem>
-            {releases.map(r => (
-              <MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        <Box sx={{ flexGrow: 1 }} />
-        <Button variant="contained" startIcon={<Plus size={18} />} onClick={() => openTaskModal(null)} sx={{ borderRadius: 2 }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+      {/* Toolbar: chip filter bar + add button */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'nowrap', minHeight: 44 }}>
+        {/* Filter icon label */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexShrink: 0, color: 'rgba(255,255,255,0.75)' }}>
+          <Filter size={14} />
+          <Typography variant="caption" sx={{ fontWeight: 600, letterSpacing: 0.5, color: 'inherit', textTransform: 'uppercase', fontSize: '0.65rem' }}>
+            Release
+          </Typography>
+        </Box>
+
+        {/* Scrollable chip row */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, overflowX: 'auto', flex: 1, '&::-webkit-scrollbar': { display: 'none' } }}>
+          {/* All chip */}
+          <Chip
+            label="All"
+            size="small"
+            onClick={() => setReleaseFilter('__all__')}
+            sx={{
+              fontWeight: 600,
+              fontSize: '0.72rem',
+              height: 28,
+              borderRadius: '14px',
+              cursor: 'pointer',
+              border: '1.5px solid',
+              transition: 'all 0.15s',
+              ...(releaseFilter === '__all__'
+                ? { bgcolor: 'white', color: '#0052cc', borderColor: 'white' }
+                : { bgcolor: 'transparent', color: 'rgba(255,255,255,0.8)', borderColor: 'rgba(255,255,255,0.35)', '&:hover': { bgcolor: 'rgba(255,255,255,0.1)', borderColor: 'rgba(255,255,255,0.6)' } }
+              ),
+            }}
+          />
+
+          {/* Per-release chips */}
+          {releases.map(r => {
+            const isActive = releaseFilter === r.id;
+            const col = releaseStatusColor[r.status] ?? releaseStatusColor['Planned'];
+            return (
+              <Chip
+                key={r.id}
+                label={r.name}
+                size="small"
+                onClick={() => setReleaseFilter(isActive ? '__all__' : r.id)}
+                sx={{
+                  fontWeight: 600,
+                  fontSize: '0.72rem',
+                  height: 28,
+                  borderRadius: '14px',
+                  cursor: 'pointer',
+                  border: '1.5px solid',
+                  transition: 'all 0.15s',
+                  whiteSpace: 'nowrap',
+                  ...(isActive
+                    ? { bgcolor: col.bg, color: col.text, borderColor: col.border }
+                    : { bgcolor: 'transparent', color: 'rgba(255,255,255,0.8)', borderColor: 'rgba(255,255,255,0.35)', '&:hover': { bgcolor: 'rgba(255,255,255,0.1)', borderColor: 'rgba(255,255,255,0.6)' } }
+                  ),
+                }}
+              />
+            );
+          })}
+
+          {/* No Release chip */}
+          <Chip
+            label="No Release"
+            size="small"
+            onClick={() => setReleaseFilter(releaseFilter === '__none__' ? '__all__' : '__none__')}
+            sx={{
+              fontWeight: 600,
+              fontSize: '0.72rem',
+              height: 28,
+              borderRadius: '14px',
+              cursor: 'pointer',
+              border: '1.5px solid',
+              transition: 'all 0.15s',
+              whiteSpace: 'nowrap',
+              ...(releaseFilter === '__none__'
+                ? { bgcolor: 'rgba(255,255,255,0.15)', color: 'white', borderColor: 'rgba(255,255,255,0.6)' }
+                : { bgcolor: 'transparent', color: 'rgba(255,255,255,0.6)', borderColor: 'rgba(255,255,255,0.25)', '&:hover': { bgcolor: 'rgba(255,255,255,0.1)', borderColor: 'rgba(255,255,255,0.5)' } }
+              ),
+            }}
+          />
+        </Box>
+
+        <Button
+          variant="contained"
+          startIcon={<Plus size={16} />}
+          onClick={() => openTaskModal(null)}
+          sx={{ borderRadius: '20px', flexShrink: 0, bgcolor: 'white', color: '#0052cc', fontWeight: 700, '&:hover': { bgcolor: '#f0f4ff' }, px: 2, height: 34 }}
+        >
           Add Task
         </Button>
       </Box>
