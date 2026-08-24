@@ -1,8 +1,8 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithCredential, User as FirebaseUser, onAuthStateChanged, signOut } from 'firebase/auth';
-import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-shell';
-import { listen } from '@tauri-apps/api/event';
+import { getAuth, GoogleAuthProvider, signInWithCredential, signInWithPopup, User as FirebaseUser, onAuthStateChanged, signOut } from 'firebase/auth';
+
+// True when running inside a Tauri webview; false in a plain browser.
+const isTauri = typeof window !== 'undefined' && '__TAURI__' in window;
 
 const firebaseConfig = {
   apiKey: "AIzaSyD7GHlZ7FqUREYGbBZlu5gEl6I7VtP_uKU",
@@ -50,13 +50,28 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
-// Opens Google OAuth in the system browser, catches the callback on a local port,
-// exchanges the auth code (PKCE — no client secret needed), and signs into Firebase.
+// Opens Google OAuth in the system browser (Tauri: PKCE + local port; web: popup).
 export const signInWithGoogle = async (): Promise<FirebaseUser | null> => {
+  // ── Web path: Firebase popup handles OAuth + token exchange ──────────────────
+  if (!isTauri) {
+    const provider = new GoogleAuthProvider();
+    provider.addScope('https://www.googleapis.com/auth/spreadsheets');
+    provider.addScope('https://www.googleapis.com/auth/drive.file');
+    const result = await signInWithPopup(auth, provider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (credential?.accessToken) setTokenStorage(credential.accessToken);
+    return result.user;
+  }
+
+  // ── Tauri desktop path: PKCE + local OAuth server ───────────────────────────
   if (!GOOGLE_CLIENT_ID) {
     alert('Google Client ID not configured. Add VITE_GOOGLE_CLIENT_ID to your .env file.');
     return null;
   }
+
+  const { invoke } = await import('@tauri-apps/api/core');
+  const { open } = await import('@tauri-apps/plugin-shell');
+  const { listen } = await import('@tauri-apps/api/event');
 
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = await generateCodeChallenge(codeVerifier);
@@ -94,7 +109,7 @@ export const signInWithGoogle = async (): Promise<FirebaseUser | null> => {
 
         const tokenParams: Record<string, string> = {
           code,
-          client_id: GOOGLE_CLIENT_ID,
+          client_id: GOOGLE_CLIENT_ID!,
           redirect_uri: redirectUri,
           code_verifier: codeVerifier,
           grant_type: 'authorization_code',

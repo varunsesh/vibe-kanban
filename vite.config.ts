@@ -5,6 +5,8 @@ const host = process.env.TAURI_DEV_HOST
 
 export default defineConfig({
   plugins: [react()],
+  // GitHub Actions sets GITHUB_PAGES=true; Tauri desktop builds and local dev use root.
+  base: process.env.GITHUB_PAGES === 'true' ? '/vibe-kanban/' : '/',
   clearScreen: false,
   server: {
     port: 5173,
